@@ -10,3 +10,18 @@ A PowerShell script to test an IIS website for the most common setup problems.
 ### Version
 
 0.1 - initial empty script
+
+### Tests
+
+- Is the site running
+- Is the application pool running
+- Does a web.config file exists in the root
+
+### Planned tests
+
+- Correct NTFS permissions 
+- Handle various 404.x responses
+
+### Installation
+
+Just copy the Test-WebSite.ps1 file and run it elevated on your IIS box.
