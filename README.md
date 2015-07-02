@@ -25,7 +25,7 @@ It then tries to suggest various things to fix the problem.
 - Is the site running
 - Is the application pool running
 - Does a web.config file exists in the root
-- Does a request return a 200, if not what's the substatus code?
+- Does a request return a 200, if not what's the sub-status code?
 
 ### Future improvements
 
@@ -39,7 +39,7 @@ Just copy the Test-WebSite.ps1 file and run it elevated on your IIS box.
 
 ### Example output:
 
-    ^D:\: .\Test-WebSite.ps1 -Resource /no.html -skip
+    ^D:\: .\Test-WebSite.ps1 -Resource /no.html
 
     Test: WebSite: "Default Web Site" exists
     Test: WebSite: "Default Web Site" is running

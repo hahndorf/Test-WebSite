@@ -10,6 +10,8 @@
     the url part of the resource to test starting with the with slash after the hostname/port
     on the full url. Always start with a forward slash. If empty, the home page of the site will
     be tested.
+.PARAMETER mvc
+    To indicate that the resource to be checked should be handled by ASP.NET MVC
 .PARAMETER SkipPrerequisitesChecks
     If specified, several checks for prerequisites are not performed. Because these cecks may take
     some time you can choose to skip them if you are sure you have them.
@@ -32,7 +34,8 @@ param(
   [ValidatePattern("/[-\?/\.=&a-z0-9]*")]
   [string]$Resource = "",
   [alias("skip")]
-  [switch]$SkipPrerequisitesChecks
+  [switch]$SkipPrerequisitesChecks,
+  [switch]$mvc
 )
 
     Begin
@@ -43,6 +46,7 @@ param(
 
         $statusInfo = New-Object 'System.Collections.Generic.dictionary[string,string]'
         $statusInfo.Add("404.0","The file that you are trying to access does not exist")
+        $statusInfo.Add("404.3","The current MIME mapping for the requested extension type is not valid or is not configured.")
         $statusInfo.Add("401.3","This HTTP status code indicates a problem in the NTFS file system permissions. This problem may occur even if the permissions are correct for the file that you are trying to access. For example, this problem occurs if the IUSR account does not have access to the C:\Winnt\System32\Inetsrv directory. For more information about how to resolve this problem, check the article in the Microsoft Knowledge Base: 942042 ")
 
         Function Show-PoshCommand([string]$info,[string]$intro)
@@ -157,23 +161,65 @@ param(
         {
             $fullStatus = "$status.$subStatus"
             Write-Warning "$url - $fullStatus"
-            Write-Warning $statusInfo[$fullStatus]
+
+            if ($statusInfo.ContainsKey($fullStatus))
+            {
+                Write-Warning $statusInfo[$fullStatus]
+            }
+            else
+            {
+                Write-Warning "This problem is currently not handled"
+            }
+
+            
 
             $res = $url -replace "^https?://[^/]+", ""
             $res = $res -replace "/","\"
             $potentialResource = Join-Path $webRoot $res
 
-             Write-Output ""
-
             $AppProcessmodel = ($pool | Select -ExpandProperty processmodel)
             $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+            
+            If (($res.EndsWith("\")) -or ($res -eq ""))
+            {
+                # we need to find the default document for this request
+                # we could have different default documents in subfolders
+                # for now we just check the default documents for the site
+
+                Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | ForEach {
+
+                    $file = (Join-Path $webRoot $res)
+                    $file = (Join-Path $file $_.value)
+
+                  #  $file
+
+                    if (Test-path $file)
+                    {
+                        $potentialResource = $file
+                    }                   
+                }
+            }
+
+            Write-Output ""
+
+
+            if ($fullStatus -eq "404.3")
+            {
+                If (Test-Path $potentialResource)
+                {
+                    $extension = [System.IO.Path]::GetExtension($potentialResource)
+
+                    Write-Output "The file $potentialResource exists, but IIS is not configured to serve files with the extension `'$extension`'"
+                    Show-PoshCommand "Add-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`' -filter 'system.webServer/staticContent' -name '.' -value @{fileExtension=`'$extension`';mimeType='text/html'}" "Add a new MIME type, but make sure your are using the correct type for this file"
+                }
+            }
 
             if ($fullStatus -eq "401.3")
             {
                 If (Test-Path $potentialResource)
                 {
                     Write-Output "Here are the permissions for file: $potentialResource"
-                    (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType
+                    (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
                     # show the user running the pool
                     # suggest acl change to fix this problem
                     
@@ -191,12 +237,14 @@ param(
                     if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
                     {
                         Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " "You may want to give read access to IIS_IUSRS"
+                        Show-PoshCommand -info "& icacls.exe `"$webRoot`" /T /grant `"BUILTIN\IIS_IUSRS:(OI)(CI)(RX)`" " "Or better, set read permission for the webroot to IIS_IUSRS"
                     }  
                     else
                     {                        
                         Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"IUSR:RX`" " "You may want to give read access to IUSR"
+                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant /T `"IUSR:(OI)(CI)(RX)`" " "Or give read access to IUSR for the whole webroot folder"
                         Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" "Or use the ApplicationPoolIdentity as user for anonymous access" 
-                    }                                        
+                    }                                                          
                 }
             }
         }
