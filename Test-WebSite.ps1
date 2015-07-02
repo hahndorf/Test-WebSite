@@ -45,14 +45,25 @@ param(
         $statusInfo.Add("404.0","The file that you are trying to access does not exist")
         $statusInfo.Add("401.3","This HTTP status code indicates a problem in the NTFS file system permissions. This problem may occur even if the permissions are correct for the file that you are trying to access. For example, this problem occurs if the IUSR account does not have access to the C:\Winnt\System32\Inetsrv directory. For more information about how to resolve this problem, check the article in the Microsoft Knowledge Base: 942042 ")
 
-        Function Show-PoshCommand([string]$info)
+        Function Show-PoshCommand([string]$info,[string]$intro)
         {
-            Write-Host "You may use the following command:"
+            $info | clip
+            if ($intro -ne $null)
+            {
+                Write-Host $intro 
+            }
+            else
+            {
+                Write-Host "You may use the following command:"
+            }
             Write-Host $info -ForegroundColor Black -BackgroundColor Gray
+            Write-Host "This command has been copied to your clipboard"
         }
 
         if (!($SkipPrerequisitesChecks))
         {
+            Write-Output "Checking prerequisites..."
+
             if (!($userIsAdmin))
             {
                 Write-Warning "Please run this script as elevated administrator"
@@ -142,15 +153,20 @@ param(
 
         }
 
-        Function Process-Problem([string]$webRoot,[string]$url,[int]$status,[int]$subStatus,$processModel)
+        Function Process-Problem([string]$webRoot,[string]$url,[int]$status,[int]$subStatus,$pool,$site)
         {
             $fullStatus = "$status.$subStatus"
-            Write-OutPut "$url - $fullStatus" 
-            Write-OutPut $statusInfo[$fullStatus]
+            Write-Warning "$url - $fullStatus"
+            Write-Warning $statusInfo[$fullStatus]
 
             $res = $url -replace "^https?://[^/]+", ""
             $res = $res -replace "/","\"
             $potentialResource = Join-Path $webRoot $res
+
+             Write-Output ""
+
+            $AppProcessmodel = ($pool | Select -ExpandProperty processmodel)
+            $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
             if ($fullStatus -eq "401.3")
             {
@@ -160,15 +176,27 @@ param(
                     (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType
                     # show the user running the pool
                     # suggest acl change to fix this problem
-
-                    if ($processModel.identityType -eq "ApplicationPoolIdentity")
+                    
+                    if ($AppProcessmodel.identityType -eq "ApplicationPoolIdentity")
                     {
-                        Write-Output "The Application pool is running under: AppPool\poolName )"
+                        Write-Output "`r`nThe Application pool is running under: `"IIS APPPOOL\$($pool.name)`""
                     }
                     else
                     {
-                        Write-Output "The Application pool is running under: $($processModel.identityType)"
-                    }                   
+                        Write-Output "The Application pool is running under: $($AppProcessmodel.identityType)"
+                    }   
+                    
+                    Write-Output ""       
+                    
+                    if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
+                    {
+                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " "You may want to give read access to IIS_IUSRS"
+                    }  
+                    else
+                    {                        
+                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"IUSR:RX`" " "You may want to give read access to IUSR"
+                        Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" "Or use the ApplicationPoolIdentity as user for anonymous access" 
+                    }                                        
                 }
             }
         }
@@ -264,7 +292,7 @@ param(
         }
         else
         {
-            $AppProcessmodel = ($pool | Select -ExpandProperty processmodel)
+            
 
             # flush logbuffer to see log entries right away
             & netsh http flush logbuffer | Out-Null
@@ -348,7 +376,8 @@ param(
                         $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
                         $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
                         $cols = $row.Split(" ") 
-                        Process-Problem $webRoot $($request.Value) $($cols[$statusColumn-1]) $($cols[$subStatusColumn-1])  $AppProcessmodel                                      
+
+                        Process-Problem $webRoot $($request.Value) $($cols[$statusColumn-1]) $($cols[$subStatusColumn-1])  $pool $site                                     
                     }
                 } # foreach row
             } # for each request
