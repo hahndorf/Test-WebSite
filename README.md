@@ -6,6 +6,7 @@ A PowerShell script to test an IIS website for the most common setup problems.
 - IIS 7 or higher
 - PowerShell 3 or higher
 - PowerShell WebAdministration module installed.
+- Windows Server 2012 R2 (others may work)
 
 ### Version
 
@@ -16,6 +17,7 @@ A PowerShell script to test an IIS website for the most common setup problems.
 - Is the site running
 - Is the application pool running
 - Does a web.config file exists in the root
+- Does a request return a 200, if not what's the substatus code?
 
 ### Planned tests
 
