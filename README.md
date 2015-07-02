@@ -7,6 +7,8 @@ A PowerShell script to test an IIS website for the most common setup problems.
 - PowerShell 3 or higher
 - PowerShell WebAdministration module installed.
 - Windows Server 2012 R2 (others may work)
+- IIS logging installed with certain settings
+- IIS Failed request tracing installed
 
 ### Version
 
