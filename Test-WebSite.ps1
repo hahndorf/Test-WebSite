@@ -11,10 +11,14 @@
     on the full url. Always start with a forward slash. If empty, the home page of the site will
     be tested.
 .PARAMETER mvc
-    To indicate that the resource to be checked should be handled by ASP.NET MVC
+    To indicate that the resource to be checked is expected to be handled by ASP.NET MVC
+.PARAMETER install
+    Installs required IIS components.
 .PARAMETER SkipPrerequisitesChecks
     If specified, several checks for prerequisites are not performed. Because these cecks may take
     some time you can choose to skip them if you are sure you have them.
+.PARAMETER DontOfferFixes
+    If specified, the user will never be asked to run fixes. Useful for testing
 .EXAMPLE       
     Test-WebSite -Name MySite
     Uses the default tests against the web site named 'MySite'
@@ -33,9 +37,11 @@ param(
   [string]$Name = "Default Web Site",
   [ValidatePattern("/[-\?/\.=&a-z0-9]*")]
   [string]$Resource = "",
+  [switch]$install,
   [alias("skip")]
   [switch]$SkipPrerequisitesChecks,
-  [switch]$mvc
+  [switch]$mvc,
+  [switch]$DontOfferFixes
 )
 
     Begin
@@ -64,8 +70,54 @@ param(
             Write-Host "This command has been copied to your clipboard"
         }
 
+        Function Install-IISFeature([string]$name)
+        {
+            if ((Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -eq $name -and $_.State -eq "Enabled"}).count -eq 0) 
+            {
+                Write-Output "Running: Enable-WindowsOptionalFeature -Online -FeatureName $name "
+                Enable-WindowsOptionalFeature -Online -FeatureName $name           
+            }
+            else
+            {
+                Write-Output "$name is already installed"
+            }
+        }
+
+        Function Install-IISFeatures()
+        {
+            Install-IISFeature -name IIS-ManagementScriptingTools
+            Install-IISFeature -name IIS-HttpLogging 
+            Install-IISFeature -name IIS-HttpTracing 
+        }
+
+        Function Confirm-Command([string]$message)
+        {
+            if ($DontOfferFixes)
+            {
+                return 1
+            }
+                      
+            $yes = New-Object System.Management.Automation.Host.ChoiceDescription "&Yes", `
+               "Executes command now."
+
+            $no = New-Object System.Management.Automation.Host.ChoiceDescription "&No", `
+                "Does not execute the command"
+
+            $options = [System.Management.Automation.Host.ChoiceDescription[]]($yes, $no)
+
+            return $host.ui.PromptForChoice("", $message, $options, 1) 
+
+        }
+
+        if ($install)
+        {
+            Install-IISFeatures
+            exit 0          
+        }
+
         if (!($SkipPrerequisitesChecks))
         {
+            
             Write-Output "Checking prerequisites..."
 
             if (!($userIsAdmin))
@@ -75,27 +127,47 @@ param(
                 Exit 401 # Access denied.
             }
 
+            $componentsMissing = $false
+
             if(!(Get-Module -ListAvailable -Name WebAdministration))
-            {
-                Write-Warning  "Please ensure that WebAdministration module is installed."
-                Show-PoshCommand "Enable-WindowsOptionalFeature -Online -FeatureName IIS-ManagementScriptingTools"
-                Exit 412 # Precondition failed.
+            { 
+                Write-Output "WebAdministration module is missing."
+                $componentsMissing = $true
             }
 
-            if ((Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -eq "IIS-HttpLogging" -and $_.State -eq "Enabled"}).count -eq 0) 
+
+            # checking Get-WindowsOptionalFeature is very slow, so get the features once.
+
+            $iisFeatures = Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS" -and $_.State -eq "Enabled"}
+
+            if (($iisFeatures | Where FeatureName -eq IIS-HttpLogging).count -eq 0) 
             {
-                Write-Warning  "Please ensure that IIS-HttpLogging is installed."
-                Show-PoshCommand "Enable-WindowsOptionalFeature -Online -FeatureName IIS-HttpLogging"
-                Exit 412 # Precondition failed.            
+                Write-Output "HttpLogging module is missing" 
+                $cponentsMissing = $true          
             }
 
-            if ((Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -eq "IIS-HttpTracing" -and $_.State -eq "Enabled"}).count -eq 0) 
+            if (($iisFeatures | Where FeatureName -eq IIS-HttpTracing).count -eq 0)
             {
-                Write-Warning  "Please ensure that IIS-HttpTracing is installed."
-                Show-PoshCommand "Enable-WindowsOptionalFeature -Online -FeatureName IIS-HttpTracing"
-                Exit 412 # Precondition failed.            
+                Write-Output "Failed Request tracing module is missing" 
+                $componentsMissing = $true                        
             }
+
+            if ($componentsMissing)
+            {
+                Show-PoshCommand "Test-WebSite -install" "One or more modules are missing, please run:"
+
+                $result = Confirm-Command -message "Install required modules now?"
+
+                switch ($result)
+                {
+                    0 {Install-IISFeatures}
+                    1 {}
+                }   
+            
+                Exit 412 # Precondition failed    
+            }      
         }
+        
 
         $userAgentRoot = "Test-WebSite"
 
@@ -171,6 +243,8 @@ param(
                 Write-Warning "This problem is currently not handled"
             }
 
+            # use content from files in C:\inetpub\custerr\en-US
+            # to display some information about the problem
             
 
             $res = $url -replace "^https?://[^/]+", ""
@@ -203,6 +277,32 @@ param(
             Write-Output ""
 
 
+            # display content from the IIS error pages
+            # there may be more than one language we just pick the random first one
+            $errorPageDir = Get-ChildItem $env:SystemDrive\inetpub\custerr\ | select -First 1
+            # get the full file name for the error page
+            $errorPageFile = $status.ToString() + "-" + $subStatus.ToString() + ".htm"
+            $errorPageFile = Join-Path $errorPageDir.FullName $errorPageFile
+
+            if (Test-Path $errorPageFile)
+            {
+                Write-Output "----------------------------------------------------------------------"
+                Write-Output "Additional Information:"
+                [xml]$errorPage = Get-Content $errorPageFile
+                Write-Output $errorPage.html.body.div.div.fieldset.h2
+                Write-Output $errorPage.html.body.div.div.fieldset.h3
+                Write-Output "----------------------------------------------------------------------"
+            }
+
+            Write-Output "Suggested solution:"
+
+            if ($fullStatus -eq "404.0")
+            {
+                Write-Output "The file `'$potentialResource`' does not exists on disk, please double check the location."
+                return
+            }
+
+
             if ($fullStatus -eq "404.3")
             {
                 If (Test-Path $potentialResource)
@@ -210,7 +310,9 @@ param(
                     $extension = [System.IO.Path]::GetExtension($potentialResource)
 
                     Write-Output "The file $potentialResource exists, but IIS is not configured to serve files with the extension `'$extension`'"
-                    Show-PoshCommand "Add-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`' -filter 'system.webServer/staticContent' -name '.' -value @{fileExtension=`'$extension`';mimeType='text/html'}" "Add a new MIME type, but make sure your are using the correct type for this file"
+                    Show-PoshCommand "Add-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`' -filter 'system.webServer/staticContent' -name '.' -value @{fileExtension=`'$extension`';mimeType='text/html'}" `
+                    -intro "Add a new MIME type, but make sure your are using the correct type for this file"
+                    return
                 }
             }
 
@@ -236,23 +338,26 @@ param(
                     
                     if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
                     {
-                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " "You may want to give read access to IIS_IUSRS"
-                        Show-PoshCommand -info "& icacls.exe `"$webRoot`" /T /grant `"BUILTIN\IIS_IUSRS:(OI)(CI)(RX)`" " "Or better, set read permission for the webroot to IIS_IUSRS"
+                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " -intro "You may want to give read access to IIS_IUSRS"
+                        Show-PoshCommand -info "& icacls.exe `"$webRoot`" /T /grant `"BUILTIN\IIS_IUSRS:(OI)(CI)(RX)`" " -intro "Or better, set read permission for the webroot to IIS_IUSRS"
                     }  
                     else
                     {                        
-                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"IUSR:RX`" " "You may want to give read access to IUSR"
-                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant /T `"IUSR:(OI)(CI)(RX)`" " "Or give read access to IUSR for the whole webroot folder"
-                        Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" "Or use the ApplicationPoolIdentity as user for anonymous access" 
-                    }                                                          
+                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"IUSR:RX`" " -intro "You may want to give read access to IUSR"
+                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant /T `"IUSR:(OI)(CI)(RX)`" " -intro "Or give read access to IUSR for the whole webroot folder"
+                        Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" -intro "Or use the ApplicationPoolIdentity as user for anonymous access" 
+                    }   
+                    return                                                       
                 }
             }
+
+            Write-Output "It seems in this version we have no information about how to fix your problem, sorry."
         }
     }
     Process
     {
 
-        $site = (Get-Item "IIS:\sites\$name")
+        $site = Get-ChildItem iis:\sites\ | Where name -eq $name
 
         if ($site -eq $null)
         {
@@ -279,16 +384,14 @@ param(
 
         $pool = Get-Item IIS:\\AppPools\$poolName
 
-
-
+        # the following two tests are not really required because
+        # if the pool wouldn't exist or running, the site wouldn't run either.
         if ($pool -eq $null)
         {
             Write-Warning "Application Pool $poolName not found"
             Write-Output "Make sure your website has a existing application pool assigned"
             Exit 610
         }
-
-        Show-TestSuccess -info "AppPool: `"$poolName`" is exists"
     
         if ($pool.State -ne "Started")
         {
@@ -297,17 +400,33 @@ param(
             Show-PoshCommand "Start-WebAppPool `"$poolName`""
             Exit 611
         }
-
-        Show-TestSuccess -info "AppPool: `"$poolName`" is running"
         
         $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
         $webConfig = Join-Path $webRoot "web.config"
 
+        $webConfigTemplate = @"
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <system.webServer>
+    </system.webServer>
+</configuration>        
+"@
+
         if (!(Test-path $webConfig))
         {
-            Write-Warning "Web.Config file does not exists in web root"
+            Write-Warning "Web.Config file does not exists in the web root"
             Write-Output "Please make sure $webConfig exists."
+          #  Show-PoshCommand -info "$webConfigTemplate | Set-Content $webConfig"
+
+            $result = Confirm-Command -message "Create an empty web.config file now?"
+
+            switch ($result)
+            {
+                0 {$webConfigTemplate | Set-Content $webConfig -Verbose}
+                1 {}
+            }
+
             Exit 662
         }
 
