@@ -48,7 +48,9 @@ param(
   [alias("skip")]
   [switch]$SkipPrerequisitesChecks,
   [switch]$mvc,
-  [switch]$DontOfferFixes
+  [switch]$DontOfferFixes,
+  [switch]$EnableFreb,
+  [switch]$DisableFreb
 )
 
     Begin
@@ -120,6 +122,54 @@ param(
 
             return $host.ui.PromptForChoice("", $message, $options, 1) 
 
+        }
+
+        Function Enable-Tracing
+        {
+            param(
+            [int]$siteId,
+            [string]$siteName,
+            [string]$statusCodes,
+            [string]$resource
+            )
+
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter "system.applicationHost/sites/site[@id=$siteId]/traceFailedRequestsLogging" -name "enabled" -value "True"
+
+            Write-Output "Enabling failed request tracing for $resource requests with $statusCodes status..."
+
+            $psPath = "MACHINE/WEBROOT/APPHOST/$siteName"
+            $filter = "system.webServer/tracing/traceFailedRequests"
+
+            $pathFilter = "@path='" + $resource + "'"
+
+            # clear any existing stuff
+            Remove-WebConfigurationProperty  -pspath $psPath  -filter "system.webServer/tracing/traceFailedRequests" -name "."
+
+            Add-WebConfigurationProperty -pspath $psPath -filter "$filter" -name "." -value @{path=$resource}
+            Add-WebConfigurationProperty -pspath $psPath -filter "$filter/add[$pathFilter]/traceAreas" -name "." -value @{provider='ASP';verbosity='Verbose'}
+            Add-WebConfigurationProperty -pspath $psPath -filter "$filter/add[$pathFilter]/traceAreas" -name "." -value @{provider='ASPNET';areas='Infrastructure,Module,Page,AppServices';verbosity='Verbose'}
+            Add-WebConfigurationProperty -pspath $psPath -filter "$filter/add[$pathFilter]/traceAreas" -name "." -value @{provider='ISAPI Extension';verbosity='Verbose'}
+            Add-WebConfigurationProperty -pspath $psPath -filter "$filter/add[$pathFilter]/traceAreas" -name "." -value @{provider='WWW Server';areas='Authentication,Security,Filter,StaticFile,CGI,Compression,Cache,RequestNotifications,Module,FastCGI,WebSocket,Rewrite';verbosity='Verbose'}
+            Set-WebConfigurationProperty -pspath $psPath -filter "$filter/add[$pathFilter]/failureDefinitions" -name "statusCodes" -value "$statusCodes"
+                       
+        }
+
+        Function Disable-Tracing
+        {
+            param(
+                [int]$siteId,
+                [string]$siteName
+            )
+
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter "system.applicationHost/sites/site[@id=$siteId]/traceFailedRequestsLogging" -name "enabled" -value "False"
+
+            Write-Output "Disabling failed request tracing for this site"
+
+            $psPath = "MACHINE/WEBROOT/APPHOST/$siteName"
+
+            # clear any existing stuff
+            Remove-WebConfigurationProperty -pspath $psPath  -filter "system.webServer/tracing/traceFailedRequests" -name "."
+                       
         }
 
         if ($install)
@@ -246,8 +296,7 @@ param(
             return $url
 
         }
-
-        
+       
         Function Process-Problem
         {
             [OutputType([int])]
@@ -284,7 +333,14 @@ param(
             $AppProcessmodel = ($pool | Select -ExpandProperty processmodel)
             $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
-            $defaultDocs = Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value
+            try
+            {
+                $defaultDocs = Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value    
+            }
+            catch
+            {
+                Write-Warning "A problem occurred reading the configuration"
+            }
             
             If (($res.EndsWith("\")) -or ($res -eq ""))
             {
@@ -355,7 +411,11 @@ param(
                 if ($win32Status -eq 5)
                 {
                     Write-Output "Set permissions on web.config"
-                }   
+                } 
+                elseif ($win32Status -eq 50)
+                {
+                    Write-Output "Configuration "
+                }  
             }
             elseif ($fullStatus -eq "401.3")
             {
@@ -396,6 +456,29 @@ param(
                 Write-Verbose "It seems in this version we have no information about how to fix your problem, sorry."
             }
 
+            if ($EnableFreb)
+            {
+                Enable-Tracing -siteId $site.id -siteName $site.Name -statuscodes $status -resource "*"
+                Write-Output "Please run the same test again"
+            }
+
+            $filter = "system.applicationHost/sites/site[@name='" + $site.Name + "']/traceFailedRequestsLogging"
+            $frebDir = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name "directory").Value
+
+            $frebDir = [System.Environment]::ExpandEnvironmentVariables($frebDir)
+            $frebDir = Join-Path $frebDir $("W3SVC" + $site.Id) 
+
+            $frebFiles = Get-ChildItem $frebDir -Filter "fr*.xml" | Where LastWriteTime -gt $script:RequestStart.DateTime
+
+            if ($frebFiles.count -gt 0)
+            {
+                Write-Host "Failed Request Tracing files are available:"
+                $frebFiles | ForEach {Write-Host $_.FullName}
+            }
+
+      #      $frebDir
+      #      $script:RequestStart
+
             Exit Get-ExitCode -status $status -sub $subStatus
         }
     }
@@ -421,6 +504,13 @@ param(
             Write-Output "Please make sure the web site is running:"
             Show-PoshCommand "Start-WebSite `"$name`""
             Exit 60001
+        }
+
+
+
+        if ($DisableFreb)
+        {
+            Disable-Tracing -siteId $site.id -siteName $site.Name
         }
 
         Show-TestSuccess -info "WebSite: `"$name`" is running"
@@ -476,6 +566,8 @@ param(
         }
 
         Show-TestSuccess -info "Configuration `"$webConfig`" exists"
+
+        $script:RequestStart = Get-Date
 
         $failedRequests = New-Object 'System.Collections.Generic.dictionary[int64,string]'
 
@@ -605,7 +697,14 @@ param(
                         $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
                         $cols = $row.Split(" ") 
 
-                        Process-Problem $webRoot $($request.Value) $($cols[$statusColumn-1]) $($cols[$subStatusColumn-1]) $($cols[$win32StatusColumn-1]) $pool $site                                    
+                        try
+                        {
+                            Process-Problem $webRoot $($request.Value) $($cols[$statusColumn-1]) $($cols[$subStatusColumn-1]) $($cols[$win32StatusColumn-1]) $pool $site                                    
+                        }
+                        catch
+                        {
+                            Write-Error $_.Exception.ToString()
+                        }
                     }
                 } # foreach row
             } # for each request
