@@ -26,6 +26,13 @@
     Test-WebSite -Resource "/login.asp?user=foo" -SkipPrerequisitesChecks
     Uses the default tests against the specified resource on the web site named 'Default Web Site'. Skips checks.
 .NOTES
+
+    The exit values are integer number between 10000 and 10000
+    They are calculated by multiplying the http status times 100 and add the substatus
+    So an normal okay is 20000
+    a 404.8 is 40408
+    a 500.19 is 50019
+
     Author: Peter Hahndorf
     Date:   July 1, 2015    
 #>
@@ -54,6 +61,12 @@ param(
         $statusInfo.Add("404.0","The file that you are trying to access does not exist")
         $statusInfo.Add("404.3","The current MIME mapping for the requested extension type is not valid or is not configured.")
         $statusInfo.Add("401.3","This HTTP status code indicates a problem in the NTFS file system permissions. This problem may occur even if the permissions are correct for the file that you are trying to access. For example, this problem occurs if the IUSR account does not have access to the C:\Winnt\System32\Inetsrv directory. For more information about how to resolve this problem, check the article in the Microsoft Knowledge Base: 942042 ")
+        $statusInfo.Add("500.19","The related configuration data for the page is invalid or can not be accessed.")
+
+        Function Get-ExitCode([int]$status,[int]$sub)
+        {
+            return ($status * 100) + $sub
+        }
 
         Function Show-PoshCommand([string]$info,[string]$intro)
         {
@@ -191,6 +204,11 @@ param(
             try {
               $res = Invoke-WebRequest -Uri $url -UserAgent $userAgent -Method Get
             
+                if ($res.StatusCode -gt  499)
+                {
+                    $res
+                }
+
                 return $res.StatusCode            
             
             } catch {
@@ -229,10 +247,22 @@ param(
 
         }
 
-        Function Process-Problem([string]$webRoot,[string]$url,[int]$status,[int]$subStatus,$pool,$site)
+        
+        Function Process-Problem
         {
+            [OutputType([int])]
+            param(
+            [string]$webRoot,
+            [string]$url,
+            [int]$status,
+            [int]$subStatus,
+            [int]$win32Status,
+            $pool,
+            $site
+            )
+        
             $fullStatus = "$status.$subStatus"
-            Write-Warning "$url - $fullStatus"
+            Write-Warning "$url - $fullStatus - Win32: $win32Status"
 
             if ($statusInfo.ContainsKey($fullStatus))
             {
@@ -240,7 +270,7 @@ param(
             }
             else
             {
-                Write-Warning "This problem is currently not handled"
+           #     Write-Warning "This problem is currently not handled"
             }
 
             # use content from files in C:\inetpub\custerr\en-US
@@ -253,6 +283,8 @@ param(
 
             $AppProcessmodel = ($pool | Select -ExpandProperty processmodel)
             $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+
+            $defaultDocs = Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value
             
             If (($res.EndsWith("\")) -or ($res -eq ""))
             {
@@ -260,7 +292,7 @@ param(
                 # we could have different default documents in subfolders
                 # for now we just check the default documents for the site
 
-                Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | ForEach {
+                $defaultDocs | ForEach {
 
                     $file = (Join-Path $webRoot $res)
                     $file = (Join-Path $file $_.value)
@@ -275,7 +307,6 @@ param(
             }
 
             Write-Output ""
-
 
             # display content from the IIS error pages
             # there may be more than one language we just pick the random first one
@@ -299,11 +330,16 @@ param(
             if ($fullStatus -eq "404.0")
             {
                 Write-Output "The file `'$potentialResource`' does not exists on disk, please double check the location."
-                return
             }
-
-
-            if ($fullStatus -eq "404.3")
+            elseif ($fullStatus -eq "403.14")
+            {
+                Write-Output "Make sure one of the defined default documents is present in the folder:"
+                $defaultDocs | ForEach {
+                    Write-Output " - $($_.value) "
+                }
+                Write-Output "We do not recommend to enable directory browsing"
+            }            
+            elseif ($fullStatus -eq "404.3")
             {
                 If (Test-Path $potentialResource)
                 {
@@ -312,11 +348,16 @@ param(
                     Write-Output "The file $potentialResource exists, but IIS is not configured to serve files with the extension `'$extension`'"
                     Show-PoshCommand "Add-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`' -filter 'system.webServer/staticContent' -name '.' -value @{fileExtension=`'$extension`';mimeType='text/html'}" `
                     -intro "Add a new MIME type, but make sure your are using the correct type for this file"
-                    return
                 }
             }
-
-            if ($fullStatus -eq "401.3")
+            elseif ($fullStatus -eq "500.19")
+            {             
+                if ($win32Status -eq 5)
+                {
+                    Write-Output "Set permissions on web.config"
+                }   
+            }
+            elseif ($fullStatus -eq "401.3")
             {
                 If (Test-Path $potentialResource)
                 {
@@ -346,12 +387,16 @@ param(
                         Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"IUSR:RX`" " -intro "You may want to give read access to IUSR"
                         Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant /T `"IUSR:(OI)(CI)(RX)`" " -intro "Or give read access to IUSR for the whole webroot folder"
                         Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" -intro "Or use the ApplicationPoolIdentity as user for anonymous access" 
-                    }   
-                    return                                                       
+                    }                                                  
                 }
             }
+            else
+            {
+                Write-Output "It seems in this version we have no information about how to fix your problem, sorry."
+                Write-Verbose "It seems in this version we have no information about how to fix your problem, sorry."
+            }
 
-            Write-Output "It seems in this version we have no information about how to fix your problem, sorry."
+            Exit Get-ExitCode -status $status -sub $subStatus
         }
     }
     Process
@@ -362,7 +407,7 @@ param(
         if ($site -eq $null)
         {
             Write-Warning "WebSite $name not found"
-            Exit 404 # Not Found
+            Exit 60015 # Not Found
         }
         else
         {
@@ -375,7 +420,7 @@ param(
             Write-Warning "WebSite $name is not running"
             Write-Output "Please make sure the web site is running:"
             Show-PoshCommand "Start-WebSite `"$name`""
-            Exit 601
+            Exit 60001
         }
 
         Show-TestSuccess -info "WebSite: `"$name`" is running"
@@ -390,7 +435,7 @@ param(
         {
             Write-Warning "Application Pool $poolName not found"
             Write-Output "Make sure your website has a existing application pool assigned"
-            Exit 610
+            Exit 60010
         }
     
         if ($pool.State -ne "Started")
@@ -398,7 +443,7 @@ param(
             Write-Warning "Application pool $poolName is not running"
             Write-Output "Please make sure the Application pool is running:"
             Show-PoshCommand "Start-WebAppPool `"$poolName`""
-            Exit 611
+            Exit 60011
         }
         
         $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
@@ -427,7 +472,7 @@ param(
                 1 {}
             }
 
-            Exit 662
+            Exit 60062
         }
 
         Show-TestSuccess -info "Configuration `"$webConfig`" exists"
@@ -456,6 +501,7 @@ param(
         if ($failedRequests.Count -eq 0)
         {
             Show-TestSuccess -info "All test requests returned with status 200"
+            Exit 20000
         }
         else
         {
@@ -480,7 +526,7 @@ param(
             {
                 Write-Warning "Please use Daily logs"            
                 Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'period' -value 'Daily'"
-                Exit 664            
+                Exit 60064            
             }
 
             if ($logfile.logExtFileFlags -notMatch "HttpSubStatus")
@@ -493,7 +539,7 @@ param(
                 $logFields = "'" + $logFields + "'"
 
                 Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-                Exit 665            
+                Exit 60065            
             }
 
             if ($logfile.logExtFileFlags -notMatch "UserAgent")
@@ -506,8 +552,22 @@ param(
                 $logFields = "'" + $logFields + "'"
 
                 Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-                Exit 666            
-            }        
+                Exit 60066            
+            } 
+            
+            if ($logfile.logExtFileFlags -notMatch "Win32Status")
+            {
+                Write-Warning "Please include the sc-Win32-Status field in your logs"         
+            
+                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+                $logFields += ",Win32Status"
+
+                $logFields = "'" + $logFields + "'"
+
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+                Exit 60065            
+            }            
+                   
         
             $logFileName = [System.Environment]::ExpandEnvironmentVariables($logfile.directory)
             $logFileName += "\W3SVC" + $site.Id + "\u_ex" + (Get-Date).ToString("yyMMdd") + ".log"
@@ -542,9 +602,10 @@ param(
                         $fieldColumns = $fields.Split(" ")
                         $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
                         $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
+                        $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
                         $cols = $row.Split(" ") 
 
-                        Process-Problem $webRoot $($request.Value) $($cols[$statusColumn-1]) $($cols[$subStatusColumn-1])  $pool $site                                     
+                        Process-Problem $webRoot $($request.Value) $($cols[$statusColumn-1]) $($cols[$subStatusColumn-1]) $($cols[$win32StatusColumn-1]) $pool $site                                    
                     }
                 } # foreach row
             } # for each request
