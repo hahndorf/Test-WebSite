@@ -18,7 +18,16 @@
     If specified, several checks for prerequisites are not performed. Because these cecks may take
     some time you can choose to skip them if you are sure you have them.
 .PARAMETER DontOfferFixes
-    If specified, the user will never be asked to run fixes. Useful for testing
+    If specified, the user will never be asked to run fixes. Useful for automated testing
+.PARAMETER EnableFreb
+    Enables Failed Request tracing, but just for the http status a problem was found for.
+    Overrites previously existing tracing rules for the site.
+.PARAMETER DisableFreb
+    Disables Failed Request tracing for the site and removes all tracings rules.
+.PARAMETER CreateReport
+    If present a report about your server environment is created in C:\inetpub\TestWebSiteTempData
+    You can include this report when asking for help online.
+    You may want to remove certain information from that report.
 .EXAMPLE       
     Test-WebSite -Name MySite
     Uses the default tests against the web site named 'MySite'
@@ -50,7 +59,9 @@ param(
   [switch]$mvc,
   [switch]$DontOfferFixes,
   [switch]$EnableFreb,
-  [switch]$DisableFreb
+  [switch]$DisableFreb,
+  [alias("report")]
+  [switch]$CreateReport
 )
 
     Begin
@@ -64,6 +75,8 @@ param(
         $statusInfo.Add("404.3","The current MIME mapping for the requested extension type is not valid or is not configured.")
         $statusInfo.Add("401.3","This HTTP status code indicates a problem in the NTFS file system permissions. This problem may occur even if the permissions are correct for the file that you are trying to access. For example, this problem occurs if the IUSR account does not have access to the C:\Winnt\System32\Inetsrv directory. For more information about how to resolve this problem, check the article in the Microsoft Knowledge Base: 942042 ")
         $statusInfo.Add("500.19","The related configuration data for the page is invalid or can not be accessed.")
+
+        $TestDataFullPath = "$env:SystemDrive\Inetpub\TestWebSiteTempData"
 
         Function Get-ExitCode([int]$status,[int]$sub)
         {
@@ -84,6 +97,95 @@ param(
             Write-Host $info -ForegroundColor Black -BackgroundColor Gray
             Write-Host "This command has been copied to your clipboard"
         }
+
+        Function Print-Attribute([string]$caption,[string]$value,[string]$ReportFile)
+        {
+            $caption = $caption + ":"
+            $caption = $caption.PadRight(26," ")
+
+            "$caption $value" | Out-File $ReportFile -Append
+        }
+
+        Function Create-Report($site,$pool)
+        {
+            # $CreateReport
+            if (!(Test-Path $TestDataFullPath))
+            {    
+                New-item -Path $TestDataFullPath -ItemType Directory | out-null
+            }
+
+            $ReportFile = Join-Path $TestDataFullPath $($name + ".txt")
+
+            Get-Date | Out-File $ReportFile
+            "===================================================" | Out-File $ReportFile -Append
+            "Information about the OS:" | Out-File $ReportFile -Append
+            "===================================================" | Out-File $ReportFile -Append
+
+            $OSInfo = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
+
+            $OSInfo.Caption | Out-File $ReportFile -Append
+            "Version: $($OSInfo.Version)" | Out-File $ReportFile -Append
+            "SystemDirectory: $($OSInfo.SystemDirectory)" | Out-File $ReportFile -Append
+            "OSArchitecture: $($OSInfo.OSArchitecture)" | Out-File $ReportFile -Append
+            "MUILanguages: $($OSInfo.MUILanguages)" | Out-File $ReportFile -Append
+             
+            "===================================================" | Out-File $ReportFile -Append
+            "information about IIS:" | Out-File $ReportFile -Append
+            "===================================================" | Out-File $ReportFile -Append
+
+            Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS-" -and $_.State -eq "Enabled"} | Sort FeatureName | Select FeatureName | Out-File $ReportFile -Append
+            "Global Modules" | Out-File $ReportFile -Append
+            (Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select Name | Out-File $ReportFile -Append
+
+            "===================================================" | Out-File $ReportFile -Append
+            "information about site" | Out-File $ReportFile -Append
+             "===================================================" | Out-File $ReportFile -Append
+
+            "Name: $($site.name)" | Out-File $ReportFile -Append
+            "PhysicalPath: $($site.physicalPath)" | Out-File $ReportFile -Append
+            
+            ($site | Select -expandproperty bindings).collection |format-table -AutoSize | Out-File $ReportFile -Append
+            ($site | Select -expandproperty limits).collection |format-table -AutoSize | Out-File $ReportFile -Append
+
+            "Default Documents" | Out-File $ReportFile -Append
+            Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | Out-File $ReportFile -Append
+
+            "Authentication" | Out-File $ReportFile -Append
+            Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\test" | Sort-Object SectionPath | foreach {
+                $($_.SectionPath -replace "/system.webServer/security/authentication/","")
+                 $_ | select -expandproperty attributes | Where Name -ne "password" | Select Name,Value | Format-Table -AutoSize
+            } | Out-File $ReportFile -Append
+
+
+            "===================================================" | Out-File $ReportFile -Append
+            "information about the appPool" | Out-File $ReportFile -Append
+            "===================================================" | Out-File $ReportFile -Append
+
+            Print-Attribute "Name" $($pool.name) $ReportFile
+            Print-Attribute "autoStart" $($pool.autoStart) $ReportFile
+            Print-Attribute "enable32BitAppOnWin64" $($pool.enable32BitAppOnWin64) $ReportFile
+            Print-Attribute "managedRuntimeVersion" $($pool.managedRuntimeVersion) $ReportFile
+            Print-Attribute "managedPipelineMode" $($pool.managedPipelineMode) $ReportFile
+            
+            Print-Attribute "startMode" $($pool.startMode) $ReportFile
+
+            $pm = $pool | select -expandproperty processModel
+
+            Print-Attribute "identityType" $pm.identityType $ReportFile
+            Print-Attribute "userName" $pm.userName $ReportFile
+            Print-Attribute "loadUserProfile" $pm.loadUserProfile $ReportFile
+            Print-Attribute "setProfileEnvironment" $pm.setProfileEnvironment $ReportFile
+            Print-Attribute "LogonType" $pm.logonType $ReportFile
+            Print-Attribute "ManualGroupMembership" $pm.manualGroupMembership $ReportFile
+
+            "===================================================" | Out-File $ReportFile -Append
+            "information about file permissions" | Out-File $ReportFile -Append
+            "===================================================" | Out-File $ReportFile -Append
+
+            Write-Output "A report about your environment has been written to $ReportFile"
+        }
+
+
 
         Function Install-IISFeature([string]$name)
         {
@@ -151,7 +253,36 @@ param(
             Add-WebConfigurationProperty -pspath $psPath -filter "$filter/add[$pathFilter]/traceAreas" -name "." -value @{provider='ISAPI Extension';verbosity='Verbose'}
             Add-WebConfigurationProperty -pspath $psPath -filter "$filter/add[$pathFilter]/traceAreas" -name "." -value @{provider='WWW Server';areas='Authentication,Security,Filter,StaticFile,CGI,Compression,Cache,RequestNotifications,Module,FastCGI,WebSocket,Rewrite';verbosity='Verbose'}
             Set-WebConfigurationProperty -pspath $psPath -filter "$filter/add[$pathFilter]/failureDefinitions" -name "statusCodes" -value "$statusCodes"
-                       
+            
+            # by default on a Server looking at the freb files doesn't work, by adding about:internet to the trusted zones, it should work. 
+            # this will not be reversed by Disable-Tracing. Are there any side effects to this?            
+            $null = New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\EscDomains' -Force
+            $null = New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\EscDomains\internet' -Force
+            Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\EscDomains\internet' -Name about -Value 2 -Type DWord                        
+        }
+
+        Function Copy-FrebFiles([string]$file)
+        {            
+            if (!(Test-Path $TestDataFullPath))
+            {    
+                New-item -Path $TestDataFullPath -ItemType Directory | out-null
+            }
+
+            $orgFolder = [System.IO.Path]::GetDirectoryName($file)
+
+            $xslFile = Join-Path $orgFolder "freb.xsl"
+            $targetFrebFile = Join-Path $TestDataFullPath "freb.xsl"
+            $dataFile = [System.IO.Path]::GetFileName($file)
+
+            if (!(Test-Path $targetFrebFile))
+            {
+                Copy-Item $xslFile -Destination $targetFrebFile
+            }
+
+            $targetDataFile = Join-Path $TestDataFullPath $dataFile
+
+            Copy-Item $file -Destination $targetDataFile -Force
+            return $targetDataFile
         }
 
         Function Disable-Tracing
@@ -230,8 +361,9 @@ param(
                 Exit 412 # Precondition failed    
             }      
         }
-        
 
+
+        
         $userAgentRoot = "Test-WebSite"
 
         Import-Module WebAdministration -Verbose:$false
@@ -389,7 +521,7 @@ param(
             }
             elseif ($fullStatus -eq "403.14")
             {
-                Write-Output "Make sure one of the defined default documents is present in the folder:"
+                Write-Output "Make sure one of the defined default documents is present in the folder: `'$webRoot`'"
                 $defaultDocs | ForEach {
                     Write-Output " - $($_.value) "
                 }
@@ -468,12 +600,17 @@ param(
             $frebDir = [System.Environment]::ExpandEnvironmentVariables($frebDir)
             $frebDir = Join-Path $frebDir $("W3SVC" + $site.Id) 
 
-            $frebFiles = Get-ChildItem $frebDir -Filter "fr*.xml" | Where LastWriteTime -gt $script:RequestStart.DateTime
-
-            if ($frebFiles.count -gt 0)
+            if (Test-Path $frebDir)
             {
-                Write-Host "Failed Request Tracing files are available:"
-                $frebFiles | ForEach {Write-Host $_.FullName}
+                $frebFiles = Get-ChildItem $frebDir -Filter "fr*.xml" | Where LastWriteTime -gt $script:RequestStart.DateTime
+
+                if ($frebFiles.count -gt 0)
+                {
+                    Write-Host "Failed Request Tracing files are available:"
+                    $frebFiles | ForEach {
+                        Write-Output $(Copy-FrebFiles $_.FullName)
+                    }
+                }
             }
 
       #      $frebDir
@@ -537,6 +674,11 @@ param(
         }
         
         $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+
+        if ($CreateReport)
+        {
+            Create-Report -site $site -pool $pool
+        }
 
         $webConfig = Join-Path $webRoot "web.config"
 
@@ -667,46 +809,61 @@ param(
             if (!(Test-Path $logFileName))
             {
                 Write-Warning "Log file not found: $logFileName" 
+                Write-Output "This may happen if none of the bindings for the site work" 
+                Write-Output "Try again using the verbose switch: Test-WebSite.ps1 -verbose "
+
             }
             else
             {
                 Write-Verbose "Checking $logFileName"
-            }
+            
+                # we assume the entry we are looking for is the last one, so using -tail 50
+                # gives us for few more, just in case.
 
-            $Log = Get-Content $logFileName | where {$_ -notLike "#[D,S-V]*" }
+                $Log = Get-Content $logFileName -Tail 50 | where {$_ -notLike "#[D,S-V]*" }
 
-            $fields = ""
-            $statusColumn = 0
+                $fields = ""
+                $statusColumn = 0
 
-            foreach($request in $failedRequests.GetEnumerator())
-            {
-                $id = Get-UniqueUserAgent -ticks $request.Key           
+                foreach($request in $failedRequests.GetEnumerator())
+                {
+                    $id = Get-UniqueUserAgent -ticks $request.Key           
+                    $lineFound = $false
 
-                foreach ($Row in $Log) {
+                    foreach ($Row in $Log) {
 
-                    if ($row.StartsWith("#Fields"))
+                        if ($row.StartsWith("#Fields"))
+                        {
+                            $fields = $row
+                        }
+
+                        if ($row -match $id)
+                        {                  
+                            $fieldColumns = $fields.Split(" ")
+                            $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
+                            $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
+                            $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
+                            $cols = $row.Split(" ") 
+
+                            try
+                            {
+                                Process-Problem $webRoot $($request.Value) $($cols[$statusColumn-1]) $($cols[$subStatusColumn-1]) $($cols[$win32StatusColumn-1]) $pool $site                                    
+                            }
+                            catch
+                            {
+                                Write-Error $_.Exception.ToString()
+                            }
+                            $lineFound = $true
+                            break
+                        }
+                    } # foreach row
+
+                    if(!($lineFound))
                     {
-                        $fields = $row
+                        Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
                     }
 
-                    if ($row -match $id)
-                    {                  
-                        $fieldColumns = $fields.Split(" ")
-                        $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
-                        $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
-                        $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
-                        $cols = $row.Split(" ") 
-
-                        try
-                        {
-                            Process-Problem $webRoot $($request.Value) $($cols[$statusColumn-1]) $($cols[$subStatusColumn-1]) $($cols[$win32StatusColumn-1]) $pool $site                                    
-                        }
-                        catch
-                        {
-                            Write-Error $_.Exception.ToString()
-                        }
-                    }
-                } # foreach row
+                }   # log file found
             } # for each request
         } # end if requests
     } # end process

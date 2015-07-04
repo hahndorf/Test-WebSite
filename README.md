@@ -7,18 +7,25 @@ You should run this when you are having a problem with your site setup on IIS.
 After checking a few things the script calls a page on your site, if not a http status of 200, it checks the IIS logs for that request to get the substatus code.
 It then tries to suggest various things to fix the problem.
 
+I often answer questions about IIS on [serverfault.com](http://serverfault.com), [stackoverflow.com](http://stackoverflow.com/) or [forums.iis.com](http://forums.iis.net/) and often people provide very little information about their problem.
+Nearly always it would be helpful to know the sub-status code and people should try a few common troubleshooting things before asking a questions on these forums.
+
+So if anybody could run this script before asking a question and providing the information it outputs, that would be very helpful for people answering questions.
+
+I also realized there are a lot of things this script could test and many ways in which it could break. So there is still a lot of work to do.
+
 ### Requirements
 
 - IIS 8.5 (any IIS 7+ may work, not tested)
 - PowerShell 3 or higher
 - PowerShell WebAdministration module installed.
 - Windows Server 2012 R2 (others may work)
-- IIS logging with certain settings installed
-- IIS Failed request tracing installed
+- IIS logging with certain settings installed (use -install switch)
+- IIS Failed request tracing installed (use -install switch)
 
 ### Version
 
-0.2 - First tests
+0.3 - Some features implemented
 
 ### Tests
 
@@ -65,6 +72,17 @@ Just copy the Test-WebSite.ps1 file and run it elevated on your IIS box.
     You may want to give read access to IIS_IUSRS:
     & icacls.exe "C:\inetpub\wwwroot\no.html" /grant "BUILTIN\IIS_IUSRS:RX"
     This command has been copied to your clipboard
+
+### Failed Request Tracing
+
+There are a few pain points with Failed Request Tracing on IIS:
+
+- You have to remember to install it.
+- There are a lot of things to click when you set it up in IIS Manager and you have to remember to enable it for the site as well.
+- When you navigate to `C:\inetpub\logs\FailedReqLogFiles` you are greeted with an UAC prompt because you don't have access to the folder. (Unless you run without UAC or a administrator user. I hope you don't).
+- When double-clicking on an fr*.xml file, Internet Explorer opens and says `Content from this web site is blocked, blah blah blah about:internet`. When you click `close` all you get is some gobbly goop.
+
+This script installs Failed Request Tracing and when using the -enableFreb switch, it configures it for the site and the failed http status. It gets rid of the `about:internet` prompt and copies the files to a location where standard users can read them.  
 
 ### Disclaimer
 
