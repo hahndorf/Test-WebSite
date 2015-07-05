@@ -59,9 +59,7 @@ param(
   [switch]$mvc,
   [switch]$DontOfferFixes,
   [switch]$EnableFreb,
-  [switch]$DisableFreb,
-  [alias("report")]
-  [switch]$CreateReport
+  [switch]$DisableFreb
 )
 
     Begin
@@ -97,95 +95,6 @@ param(
             Write-Host $info -ForegroundColor Black -BackgroundColor Gray
             Write-Host "This command has been copied to your clipboard"
         }
-
-        Function Print-Attribute([string]$caption,[string]$value,[string]$ReportFile)
-        {
-            $caption = $caption + ":"
-            $caption = $caption.PadRight(26," ")
-
-            "$caption $value" | Out-File $ReportFile -Append
-        }
-
-        Function Create-Report($site,$pool)
-        {
-            # $CreateReport
-            if (!(Test-Path $TestDataFullPath))
-            {    
-                New-item -Path $TestDataFullPath -ItemType Directory | out-null
-            }
-
-            $ReportFile = Join-Path $TestDataFullPath $($name + ".txt")
-
-            Get-Date | Out-File $ReportFile
-            "===================================================" | Out-File $ReportFile -Append
-            "Information about the OS:" | Out-File $ReportFile -Append
-            "===================================================" | Out-File $ReportFile -Append
-
-            $OSInfo = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
-
-            $OSInfo.Caption | Out-File $ReportFile -Append
-            "Version: $($OSInfo.Version)" | Out-File $ReportFile -Append
-            "SystemDirectory: $($OSInfo.SystemDirectory)" | Out-File $ReportFile -Append
-            "OSArchitecture: $($OSInfo.OSArchitecture)" | Out-File $ReportFile -Append
-            "MUILanguages: $($OSInfo.MUILanguages)" | Out-File $ReportFile -Append
-             
-            "===================================================" | Out-File $ReportFile -Append
-            "information about IIS:" | Out-File $ReportFile -Append
-            "===================================================" | Out-File $ReportFile -Append
-
-            Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS-" -and $_.State -eq "Enabled"} | Sort FeatureName | Select FeatureName | Out-File $ReportFile -Append
-            "Global Modules" | Out-File $ReportFile -Append
-            (Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select Name | Out-File $ReportFile -Append
-
-            "===================================================" | Out-File $ReportFile -Append
-            "information about site" | Out-File $ReportFile -Append
-             "===================================================" | Out-File $ReportFile -Append
-
-            "Name: $($site.name)" | Out-File $ReportFile -Append
-            "PhysicalPath: $($site.physicalPath)" | Out-File $ReportFile -Append
-            
-            ($site | Select -expandproperty bindings).collection |format-table -AutoSize | Out-File $ReportFile -Append
-            ($site | Select -expandproperty limits).collection |format-table -AutoSize | Out-File $ReportFile -Append
-
-            "Default Documents" | Out-File $ReportFile -Append
-            Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | Out-File $ReportFile -Append
-
-            "Authentication" | Out-File $ReportFile -Append
-            Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\test" | Sort-Object SectionPath | foreach {
-                $($_.SectionPath -replace "/system.webServer/security/authentication/","")
-                 $_ | select -expandproperty attributes | Where Name -ne "password" | Select Name,Value | Format-Table -AutoSize
-            } | Out-File $ReportFile -Append
-
-
-            "===================================================" | Out-File $ReportFile -Append
-            "information about the appPool" | Out-File $ReportFile -Append
-            "===================================================" | Out-File $ReportFile -Append
-
-            Print-Attribute "Name" $($pool.name) $ReportFile
-            Print-Attribute "autoStart" $($pool.autoStart) $ReportFile
-            Print-Attribute "enable32BitAppOnWin64" $($pool.enable32BitAppOnWin64) $ReportFile
-            Print-Attribute "managedRuntimeVersion" $($pool.managedRuntimeVersion) $ReportFile
-            Print-Attribute "managedPipelineMode" $($pool.managedPipelineMode) $ReportFile
-            
-            Print-Attribute "startMode" $($pool.startMode) $ReportFile
-
-            $pm = $pool | select -expandproperty processModel
-
-            Print-Attribute "identityType" $pm.identityType $ReportFile
-            Print-Attribute "userName" $pm.userName $ReportFile
-            Print-Attribute "loadUserProfile" $pm.loadUserProfile $ReportFile
-            Print-Attribute "setProfileEnvironment" $pm.setProfileEnvironment $ReportFile
-            Print-Attribute "LogonType" $pm.logonType $ReportFile
-            Print-Attribute "ManualGroupMembership" $pm.manualGroupMembership $ReportFile
-
-            "===================================================" | Out-File $ReportFile -Append
-            "information about file permissions" | Out-File $ReportFile -Append
-            "===================================================" | Out-File $ReportFile -Append
-
-            Write-Output "A report about your environment has been written to $ReportFile"
-        }
-
-
 
         Function Install-IISFeature([string]$name)
         {
@@ -318,7 +227,7 @@ param(
             {
                 Write-Warning "Please run this script as elevated administrator"
                 Show-PoshCommand "Start-Process -Verb runas -FilePath $PSHOME\powershell.exe"
-                Exit 401 # Access denied.
+                Exit 40100 # Access denied.
             }
 
             $componentsMissing = $false
@@ -358,7 +267,7 @@ param(
                     1 {}
                 }   
             
-                Exit 412 # Precondition failed    
+                Exit 41200 # Precondition failed    
             }      
         }
 
@@ -643,8 +552,6 @@ param(
             Exit 60001
         }
 
-
-
         if ($DisableFreb)
         {
             Disable-Tracing -siteId $site.id -siteName $site.Name
@@ -675,10 +582,7 @@ param(
         
         $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
-        if ($CreateReport)
-        {
-            Create-Report -site $site -pool $pool
-        }
+
 
         $webConfig = Join-Path $webRoot "web.config"
 
@@ -711,6 +615,67 @@ param(
 
         $script:RequestStart = Get-Date
 
+                 $logfile = $site.logfile | Select -ExcludeProperty Logfile
+
+            $filter = "system.applicationHost/sites/site[@name='" + $name + "']/logFile"
+
+        # check log file settings
+
+        if ($logfile.logFormat -ne "W3C")
+        {
+            Write-Warning "Please use W3C log format"
+            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logFormat' -value 'W3C'"
+
+            Exit 663            
+        } 
+
+        if ($logfile.period -ne "Daily")
+        {
+            Write-Warning "Please use Daily logs"            
+            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'period' -value 'Daily'"
+            Exit 60064            
+        }
+
+        if ($logfile.logExtFileFlags -notMatch "HttpSubStatus")
+        {
+            Write-Warning "Please include the sc-substatus field in your logs"         
+            
+            $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+            $logFields += ",HttpSubStatus"
+
+            $logFields = "'" + $logFields + "'"
+
+            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+            Exit 60065            
+        }
+
+        if ($logfile.logExtFileFlags -notMatch "UserAgent")
+        {
+            Write-Warning "Please include the UserAgent field in your logs"         
+            
+            $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+            $logFields += ",UserAgent"
+
+            $logFields = "'" + $logFields + "'"
+
+            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+            Exit 60066            
+        } 
+            
+        if ($logfile.logExtFileFlags -notMatch "Win32Status")
+        {
+            Write-Warning "Please include the sc-Win32-Status field in your logs"         
+            
+            $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+            $logFields += ",Win32Status"
+
+            $logFields = "'" + $logFields + "'"
+
+            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+            Exit 60065            
+        }         
+
+
         $failedRequests = New-Object 'System.Collections.Generic.dictionary[int64,string]'
 
         foreach($binding in $site.Bindings.collection)
@@ -738,71 +703,10 @@ param(
             Exit 20000
         }
         else
-        {
-            
-
+        {            
             # flush logbuffer to see log entries right away
-            & netsh http flush logbuffer | Out-Null
-
-            $logfile = $site.logfile | Select -ExcludeProperty Logfile
-
-            $filter = "system.applicationHost/sites/site[@name='" + $name + "']/logFile"
-
-            if ($logfile.logFormat -ne "W3C")
-            {
-                Write-Warning "Please use W3C log format"
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logFormat' -value 'W3C'"
-
-                Exit 663            
-            } 
-
-            if ($logfile.period -ne "Daily")
-            {
-                Write-Warning "Please use Daily logs"            
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'period' -value 'Daily'"
-                Exit 60064            
-            }
-
-            if ($logfile.logExtFileFlags -notMatch "HttpSubStatus")
-            {
-                Write-Warning "Please include the sc-substatus field in your logs"         
-            
-                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
-                $logFields += ",HttpSubStatus"
-
-                $logFields = "'" + $logFields + "'"
-
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-                Exit 60065            
-            }
-
-            if ($logfile.logExtFileFlags -notMatch "UserAgent")
-            {
-                Write-Warning "Please include the UserAgent field in your logs"         
-            
-                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
-                $logFields += ",UserAgent"
-
-                $logFields = "'" + $logFields + "'"
-
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-                Exit 60066            
-            } 
-            
-            if ($logfile.logExtFileFlags -notMatch "Win32Status")
-            {
-                Write-Warning "Please include the sc-Win32-Status field in your logs"         
-            
-                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
-                $logFields += ",Win32Status"
-
-                $logFields = "'" + $logFields + "'"
-
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-                Exit 60065            
-            }            
-                   
-        
+            & netsh http flush logbuffer | Out-Null 
+                           
             $logFileName = [System.Environment]::ExpandEnvironmentVariables($logfile.directory)
             $logFileName += "\W3SVC" + $site.Id + "\u_ex" + (Get-Date).ToString("yyMMdd") + ".log"
 
