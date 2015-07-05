@@ -2,7 +2,7 @@
 .SYNOPSIS
     Shows information about your IIS Web site
 .DESCRIPTION
-    Creates a report about your server environment is created in C:\inetpub\TestWebSiteTempData
+    Creates a report about your server environment
     You can include this report when asking for help online.
     You may want to remove certain information from that report.
 .PARAMETER Name
@@ -10,8 +10,11 @@
 .PARAMETER serverlevel
     If present, server level information will be included 
 .EXAMPLE       
-    Test-WebSite -Name MySite
-    Shows information for 'MySite'
+    Show-WebSite
+    Shows information for 'Default Web Site'
+.EXAMPLE       
+    Show-WebSite -Name MySite | out-file $env:userprofile\Downloads\mysitereport.txt
+    Collects information for 'MySite' and saves it into a file
 .NOTES
     Author: Peter Hahndorf
     Date:   July 5th, 2015    
@@ -160,7 +163,7 @@ param(
     }
     Process
     {
-        $site = Get-ChildItem iis:\sites\ | Where name -eq $name
+        $site = Get-ChildItem iis:\sites\ | Where name -eq "$name"
         if ($site -eq $null)
         {
             Write-Warning "WebSite $name not found"
@@ -168,7 +171,7 @@ param(
         }
 
         $poolName = $site.applicationPool
-        $pool = Get-Item IIS:\\AppPools\$poolName
+        $pool = Get-Item "IIS:\\AppPools\$poolName"
 
         if ($pool -eq $null)
         {

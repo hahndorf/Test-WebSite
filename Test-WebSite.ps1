@@ -24,10 +24,6 @@
     Overrites previously existing tracing rules for the site.
 .PARAMETER DisableFreb
     Disables Failed Request tracing for the site and removes all tracings rules.
-.PARAMETER CreateReport
-    If present a report about your server environment is created in C:\inetpub\TestWebSiteTempData
-    You can include this report when asking for help online.
-    You may want to remove certain information from that report.
 .EXAMPLE       
     Test-WebSite -Name MySite
     Uses the default tests against the web site named 'MySite'
@@ -293,16 +289,28 @@ param(
             $userAgent = Get-UniqueUserAgent -ticks $ticks
 
             try {
-              $res = Invoke-WebRequest -Uri $url -UserAgent $userAgent -Method Get
-            
-                if ($res.StatusCode -gt  499)
-                {
-                    $res
-                }
+                $r = [System.Net.WebRequest]::Create($url)
+                $r.UserAgent=$userAgent
+                $resp = $r.GetResponse()            
+                return $resp.StatusCode 
+            }           
+            catch [System.Net.WebException] 
+            {              
+                $resp = $_.Exception.Response
+                $reqstream = $resp.GetResponseStream()
+                $sr = New-Object System.IO.StreamReader $reqstream
+                $result = $sr.ReadToEnd()
 
-                return $res.StatusCode            
-            
-            } catch {
+                $script:fRequests += New-Object psobject -Property @{
+                    Url = $url
+                    Ticks = $ticks
+                    Status = [int]$resp.StatusCode
+                    Html = $result
+                    }      
+                    
+                return [int]$resp.StatusCode                    
+                     
+            } catch {            
                 Write-Verbose $_.Exception
                 return 555
             }
@@ -343,7 +351,7 @@ param(
             [OutputType([int])]
             param(
             [string]$webRoot,
-            [string]$url,
+            $request,
             [int]$status,
             [int]$subStatus,
             [int]$win32Status,
@@ -352,7 +360,7 @@ param(
             )
         
             $fullStatus = "$status.$subStatus"
-            Write-Warning "$url - $fullStatus - Win32: $win32Status"
+            Write-Warning "$($request.Url) - $fullStatus - Win32: $win32Status"
 
             if ($statusInfo.ContainsKey($fullStatus))
             {
@@ -367,7 +375,7 @@ param(
             # to display some information about the problem
             
 
-            $res = $url -replace "^https?://[^/]+", ""
+            $res = $request.Url -replace "^https?://[^/]+", ""
             $res = $res -replace "/","\"
             $potentialResource = Join-Path $webRoot $res
 
@@ -614,10 +622,8 @@ param(
         Show-TestSuccess -info "Configuration `"$webConfig`" exists"
 
         $script:RequestStart = Get-Date
-
-                 $logfile = $site.logfile | Select -ExcludeProperty Logfile
-
-            $filter = "system.applicationHost/sites/site[@name='" + $name + "']/logFile"
+        $logfile = $site.logfile | Select -ExcludeProperty Logfile
+        $filter = "system.applicationHost/sites/site[@name='" + $name + "']/logFile"
 
         # check log file settings
 
@@ -678,6 +684,8 @@ param(
 
         $failedRequests = New-Object 'System.Collections.Generic.dictionary[int64,string]'
 
+        $script:fRequests = @()
+
         foreach($binding in $site.Bindings.collection)
         {
             # ignore non-http protocols
@@ -694,10 +702,11 @@ param(
                     $failedRequests.Add($ticks,$url)
                 }            
             }
-
         }
 
-        if ($failedRequests.Count -eq 0)
+      #  $script:fRequests
+
+        if ($script:fRequests.Count -eq 0)
         {
             Show-TestSuccess -info "All test requests returned with status 200"
             Exit 20000
@@ -715,7 +724,6 @@ param(
                 Write-Warning "Log file not found: $logFileName" 
                 Write-Output "This may happen if none of the bindings for the site work" 
                 Write-Output "Try again using the verbose switch: Test-WebSite.ps1 -verbose "
-
             }
             else
             {
@@ -729,9 +737,9 @@ param(
                 $fields = ""
                 $statusColumn = 0
 
-                foreach($request in $failedRequests.GetEnumerator())
+                foreach($request in $script:fRequests)
                 {
-                    $id = Get-UniqueUserAgent -ticks $request.Key           
+                    $id = Get-UniqueUserAgent -ticks $request.Ticks          
                     $lineFound = $false
 
                     foreach ($Row in $Log) {
@@ -751,7 +759,7 @@ param(
 
                             try
                             {
-                                Process-Problem $webRoot $($request.Value) $($cols[$statusColumn-1]) $($cols[$subStatusColumn-1]) $($cols[$win32StatusColumn-1]) $pool $site                                    
+                                Process-Problem  -webRoot $webRoot -request $request -Status $($cols[$statusColumn-1]) -SubStatus $($cols[$subStatusColumn-1]) -win32Status $($cols[$win32StatusColumn-1]) -pool $pool -site $site                                    
                             }
                             catch
                             {
@@ -765,6 +773,7 @@ param(
                     if(!($lineFound))
                     {
                         Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
+                        Process-Problem  -webRoot $webRoot -request $request -Status $request.Status -SubStatus 0 -win32Status 0 -pool $pool -site $site
                     }
 
                 }   # log file found
