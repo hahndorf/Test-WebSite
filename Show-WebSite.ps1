@@ -166,7 +166,11 @@ param(
         $site = Get-ChildItem iis:\sites\ | Where name -eq "$name"
         if ($site -eq $null)
         {
-            Write-Warning "WebSite $name not found"
+            Write-Warning "The WebSite `'$name`' could not found"
+
+            Write-Host "Existing sites on this server:"
+            Get-ChildItem iis:\sites | Select Name | Format-Table -HideTableHeaders
+
             Exit 60015 # Not Found
         }
 

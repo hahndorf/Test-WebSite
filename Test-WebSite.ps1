@@ -12,6 +12,7 @@
     be tested.
 .PARAMETER mvc
     To indicate that the resource to be checked is expected to be handled by ASP.NET MVC
+    Not supported yet
 .PARAMETER install
     Installs required IIS components.
 .PARAMETER SkipPrerequisitesChecks
@@ -47,7 +48,7 @@
 param(
  [Parameter(Position=0)]
   [string]$Name = "Default Web Site",
-  [ValidatePattern("/[-\?/\.=&a-z0-9]*")]
+  [ValidatePattern("^(http*|/[-\?/\.=&a-z0-9]*)")]
   [string]$Resource = "",
   [switch]$install,
   [alias("skip")]
@@ -71,6 +72,7 @@ param(
         $statusInfo.Add("500.19","The related configuration data for the page is invalid or can not be accessed.")
 
         $TestDataFullPath = "$env:SystemDrive\Inetpub\TestWebSiteTempData"
+        $userAgentRoot = "Test-WebSite"
 
         Function Get-ExitCode([int]$status,[int]$sub)
         {
@@ -208,74 +210,9 @@ param(
                        
         }
 
-        if ($install)
-        {
-            Install-IISFeatures
-            exit 0          
-        }
-
-        if (!($SkipPrerequisitesChecks))
-        {
-            
-            Write-Output "Checking prerequisites..."
-
-            if (!($userIsAdmin))
-            {
-                Write-Warning "Please run this script as elevated administrator"
-                Show-PoshCommand "Start-Process -Verb runas -FilePath $PSHOME\powershell.exe"
-                Exit 40100 # Access denied.
-            }
-
-            $componentsMissing = $false
-
-            if(!(Get-Module -ListAvailable -Name WebAdministration))
-            { 
-                Write-Output "WebAdministration module is missing."
-                $componentsMissing = $true
-            }
-
-
-            # checking Get-WindowsOptionalFeature is very slow, so get the features once.
-
-            $iisFeatures = Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS" -and $_.State -eq "Enabled"}
-
-            if (($iisFeatures | Where FeatureName -eq IIS-HttpLogging).count -eq 0) 
-            {
-                Write-Output "HttpLogging module is missing" 
-                $cponentsMissing = $true          
-            }
-
-            if (($iisFeatures | Where FeatureName -eq IIS-HttpTracing).count -eq 0)
-            {
-                Write-Output "Failed Request tracing module is missing" 
-                $componentsMissing = $true                        
-            }
-
-            if ($componentsMissing)
-            {
-                Show-PoshCommand "Test-WebSite -install" "One or more modules are missing, please run:"
-
-                $result = Confirm-Command -message "Install required modules now?"
-
-                switch ($result)
-                {
-                    0 {Install-IISFeatures}
-                    1 {}
-                }   
-            
-                Exit 41200 # Precondition failed    
-            }      
-        }
-
-
-        
-        $userAgentRoot = "Test-WebSite"
-
-        Import-Module WebAdministration -Verbose:$false
-        
         Function Show-TestSuccess([string]$info)
         {
-            Write-Host "Test: $info " -ForegroundColor Green 
+            Write-Verbose "Test: $info "
         }          
 
         Function Get-UniqueUserAgent([int64]$ticks)
@@ -283,9 +220,10 @@ param(
             Return $userAgentRoot + "_" + $ticks.ToString()
         }
 
-        Function Test-WebPage([string]$url,[int64]$ticks)        
+        Function Test-WebPage([string]$url)        
         {
             Write-verbose "Testing: $url"
+            [int64]$ticks = [System.DateTime]::Now.Ticks
             $userAgent = Get-UniqueUserAgent -ticks $ticks
 
             try {
@@ -297,22 +235,32 @@ param(
             catch [System.Net.WebException] 
             {              
                 $resp = $_.Exception.Response
-                $reqstream = $resp.GetResponseStream()
-                $sr = New-Object System.IO.StreamReader $reqstream
-                $result = $sr.ReadToEnd()
 
-                $script:fRequests += New-Object psobject -Property @{
-                    Url = $url
-                    Ticks = $ticks
-                    Status = [int]$resp.StatusCode
-                    Html = $result
-                    }      
+                if ($resp -eq $null)
+                {
+                    Write-Error $_.Exception
+                    return 55400
+                }
+                else
+                {
+                    $reqstream = $resp.GetResponseStream()
+                    $sr = New-Object System.IO.StreamReader $reqstream
+                    $result = $sr.ReadToEnd()
+
+                    # store the result in a global object
+                    $script:FailedRequest = New-Object psobject -Property @{
+                        Url = $url
+                        Ticks = $ticks
+                        Status = [int]$resp.StatusCode
+                        Html = $result
+                        }      
                     
-                return [int]$resp.StatusCode                    
+                    return [int]$resp.StatusCode                
+                }                    
                      
             } catch {            
                 Write-Verbose $_.Exception
-                return 555
+                return 55500
             }
         }
 
@@ -535,7 +483,225 @@ param(
 
             Exit Get-ExitCode -status $status -sub $subStatus
         }
+
+        Function Check-Prerequisites
+        {
+            Write-Output "Checking prerequisites..."
+
+            if (!($userIsAdmin))
+            {
+                Write-Warning "Please run this script as elevated administrator"
+                Show-PoshCommand "Start-Process -Verb runas -FilePath $PSHOME\powershell.exe"
+                Exit 40100 # Access denied.
+            }
+
+            $componentsMissing = $false
+
+            if(!(Get-Module -ListAvailable -Name WebAdministration))
+            { 
+                Write-Output "WebAdministration module is missing."
+                $componentsMissing = $true
+            }
+
+
+            # checking Get-WindowsOptionalFeature is very slow, so get the features once.
+
+            $iisFeatures = Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS" -and $_.State -eq "Enabled"}
+
+            if (($iisFeatures | Where FeatureName -eq IIS-HttpLogging).count -eq 0) 
+            {
+                Write-Output "HttpLogging module is missing" 
+                $cponentsMissing = $true          
+            }
+
+            if (($iisFeatures | Where FeatureName -eq IIS-HttpTracing).count -eq 0)
+            {
+                Write-Output "Failed Request tracing module is missing" 
+                $componentsMissing = $true                        
+            }
+
+            if ($componentsMissing)
+            {
+                Show-PoshCommand "Test-WebSite -install" "One or more modules are missing, please run:"
+
+                $result = Confirm-Command -message "Install required modules now?"
+
+                switch ($result)
+                {
+                    0 {Install-IISFeatures}
+                    1 {}
+                }   
+            
+                Exit 41200 # Precondition failed    
+            }      
+        }
+
+        Function Get-Url($site,[string]$resource)
+        {
+            $url = ""
+
+            if ($resource.StartsWith("http"))
+            {
+                return $resource
+            }
+
+            # this will return http:// before any https://
+            # we may want to add more logic which binding to use later
+            foreach($binding in ($site.Bindings.collection | Sort protocol | Select -First 1))
+            {
+                # ignore non-http protocols
+                if ($binding.protocol -match "^http")
+                {
+                    $url = Convert-Binding -binding $binding
+                    $url += $resource           
+                }
+            }
+
+            return $url
+        }
+
+        Function Check-LogFile($site)
+        {
+            # this checks for log file settings which we would like to have
+            # but we should work anyways
+
+            $logfile = $site.logfile #| Select -ExpandProperty Logfile
+            $filter = "system.applicationHost/sites/site[@name='" + $site.Name + "']/logFile"
+
+            $logOkay = $true
+
+            # check log file settings
+
+            if ($logfile.logFormat -ne "W3C")
+            {
+                Write-Warning "Please use W3C log format"
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logFormat' -value 'W3C'"
+                $logOkay = $false           
+            } 
+
+            if ($logfile.period -ne "Daily")
+            {
+                Write-Warning "Please use Daily logs"            
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'period' -value 'Daily'"
+                $logOkay = $false            
+            }
+
+            if ($logfile.logExtFileFlags -notMatch "HttpSubStatus")
+            {
+                Write-Warning "Please include the sc-substatus field in your logs"         
+            
+                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+                $logFields += ",HttpSubStatus"
+
+                $logFields = "'" + $logFields + "'"
+
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+                $logOkay = $false           
+            }
+
+            if ($logfile.logExtFileFlags -notMatch "UserAgent")
+            {
+                Write-Warning "Please include the UserAgent field in your logs"         
+            
+                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+                $logFields += ",UserAgent"
+
+                $logFields = "'" + $logFields + "'"
+
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+                $logOkay = $false            
+            } 
+            
+            if ($logfile.logExtFileFlags -notMatch "Win32Status")
+            {
+                Write-Warning "Please include the sc-Win32-Status field in your logs"         
+            
+                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+                $logFields += ",Win32Status"
+
+                $logFields = "'" + $logFields + "'"
+
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+                $logOkay = $false           
+            }
+
+            return $logOkay
+        }
+
+        Function Process-LogEntry($site)
+        {
+            # flush logbuffer to see log entries right away
+            & netsh http flush logbuffer | Out-Null 
+
+            $logfile = $site.logfile 
+                           
+            $logFileName = [System.Environment]::ExpandEnvironmentVariables($logfile.directory)
+            $logFileName += "\W3SVC" + $site.Id + "\u_ex" + (Get-Date).ToString("yyMMdd") + ".log"
+
+            if (!(Test-Path $logFileName))
+            {
+                Write-Warning "Log file not found: $logFileName" 
+                Write-Output "This may happen if none of the bindings for the site work" 
+                Write-Output "Try again using the verbose switch: Test-WebSite.ps1 -verbose "
+            }
+            else
+            {
+                Write-Verbose "Checking $logFileName"
+            
+                # we assume the entry we are looking for is the last one, so using -tail 50
+                # gives us for few more, just in case.
+
+                $Log = Get-Content $logFileName -Tail 50 | where {$_ -notLike "#[D,S-V]*" }
+
+                $fields = ""
+                $statusColumn = 0
+
+                $id = Get-UniqueUserAgent -ticks $script:FailedRequest.Ticks          
+                $lineFound = $false
+
+                foreach ($Row in $Log) {
+
+                    if ($row.StartsWith("#Fields"))
+                    {
+                        $fields = $row
+                    }
+
+                    if ($row -match $id)
+                    {                  
+                        $fieldColumns = $fields.Split(" ")
+                        $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
+                        $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
+                        $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
+                        $cols = $row.Split(" ") 
+
+                        try
+                        {
+                            Process-Problem  -webRoot $webRoot -request $request -Status $($cols[$statusColumn-1]) -SubStatus $($cols[$subStatusColumn-1]) -win32Status $($cols[$win32StatusColumn-1]) -pool $pool -site $site                                    
+                        }
+                        catch
+                        {
+                            Write-Error $_.Exception.ToString()
+                        }
+                        $lineFound = $true
+                        break
+                    }
+                } # foreach row
+
+                if(!($lineFound))
+                {
+                    Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
+                    Process-Problem  -webRoot $webRoot -request $request -Status $request.Status -SubStatus 0 -win32Status 0 -pool $pool -site $site
+                }
+
+                }   # log file found            
+        }
+
+        if ($install){Install-IISFeatures; exit 0}
+        if (!($SkipPrerequisitesChecks)) {Check-Prerequisites}                
+        Import-Module WebAdministration -Verbose:$false
+        
     }
+
     Process
     {
 
@@ -590,8 +756,6 @@ param(
         
         $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
-
-
         $webConfig = Join-Path $webRoot "web.config"
 
         $webConfigTemplate = @"
@@ -622,163 +786,31 @@ param(
         Show-TestSuccess -info "Configuration `"$webConfig`" exists"
 
         $script:RequestStart = Get-Date
-        $logfile = $site.logfile | Select -ExcludeProperty Logfile
-        $filter = "system.applicationHost/sites/site[@name='" + $name + "']/logFile"
+      
+        $logOkay = Check-LogFile -site $site
 
-        # check log file settings
-
-        if ($logfile.logFormat -ne "W3C")
+        if ($logOkay -eq $false)
         {
-            Write-Warning "Please use W3C log format"
-            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logFormat' -value 'W3C'"
-
-            Exit 663            
-        } 
-
-        if ($logfile.period -ne "Daily")
-        {
-            Write-Warning "Please use Daily logs"            
-            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'period' -value 'Daily'"
-            Exit 60064            
+            Write-Warning "Log file settings not as required, log file will not be used"
         }
+        
+        $url = Get-Url -site $site -resource $Resource
+        $status = Test-WebPage -url $url
 
-        if ($logfile.logExtFileFlags -notMatch "HttpSubStatus")
+        if ($status -eq 200)
         {
-            Write-Warning "Please include the sc-substatus field in your logs"         
-            
-            $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
-            $logFields += ",HttpSubStatus"
-
-            $logFields = "'" + $logFields + "'"
-
-            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-            Exit 60065            
-        }
-
-        if ($logfile.logExtFileFlags -notMatch "UserAgent")
-        {
-            Write-Warning "Please include the UserAgent field in your logs"         
-            
-            $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
-            $logFields += ",UserAgent"
-
-            $logFields = "'" + $logFields + "'"
-
-            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-            Exit 60066            
-        } 
-            
-        if ($logfile.logExtFileFlags -notMatch "Win32Status")
-        {
-            Write-Warning "Please include the sc-Win32-Status field in your logs"         
-            
-            $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
-            $logFields += ",Win32Status"
-
-            $logFields = "'" + $logFields + "'"
-
-            Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-            Exit 60065            
-        }         
-
-
-        $failedRequests = New-Object 'System.Collections.Generic.dictionary[int64,string]'
-
-        $script:fRequests = @()
-
-        foreach($binding in $site.Bindings.collection)
-        {
-            # ignore non-http protocols
-            if ($binding.protocol -match "^http")
-            {
-                $url = Convert-Binding -binding $binding
-                $url += $Resource
-                $ticks = [System.DateTime]::Now.Ticks
-               
-                $status = Test-WebPage -url $url -ticks $ticks
-
-                if ($status -ne 200)
-                {
-                    $failedRequests.Add($ticks,$url)
-                }            
-            }
-        }
-
-      #  $script:fRequests
-
-        if ($script:fRequests.Count -eq 0)
-        {
-            Show-TestSuccess -info "All test requests returned with status 200"
+            Show-TestSuccess -info "The test request returned with status 200"
+            Write-Host "All tests passed" -ForegroundColor Green
             Exit 20000
         }
         else
-        {            
-            # flush logbuffer to see log entries right away
-            & netsh http flush logbuffer | Out-Null 
-                           
-            $logFileName = [System.Environment]::ExpandEnvironmentVariables($logfile.directory)
-            $logFileName += "\W3SVC" + $site.Id + "\u_ex" + (Get-Date).ToString("yyMMdd") + ".log"
-
-            if (!(Test-Path $logFileName))
-            {
-                Write-Warning "Log file not found: $logFileName" 
-                Write-Output "This may happen if none of the bindings for the site work" 
-                Write-Output "Try again using the verbose switch: Test-WebSite.ps1 -verbose "
+        {      
+            if ($logOkay)
+            {      
+                Process-LogEntry -site $site
             }
-            else
-            {
-                Write-Verbose "Checking $logFileName"
-            
-                # we assume the entry we are looking for is the last one, so using -tail 50
-                # gives us for few more, just in case.
+        }
 
-                $Log = Get-Content $logFileName -Tail 50 | where {$_ -notLike "#[D,S-V]*" }
-
-                $fields = ""
-                $statusColumn = 0
-
-                foreach($request in $script:fRequests)
-                {
-                    $id = Get-UniqueUserAgent -ticks $request.Ticks          
-                    $lineFound = $false
-
-                    foreach ($Row in $Log) {
-
-                        if ($row.StartsWith("#Fields"))
-                        {
-                            $fields = $row
-                        }
-
-                        if ($row -match $id)
-                        {                  
-                            $fieldColumns = $fields.Split(" ")
-                            $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
-                            $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
-                            $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
-                            $cols = $row.Split(" ") 
-
-                            try
-                            {
-                                Process-Problem  -webRoot $webRoot -request $request -Status $($cols[$statusColumn-1]) -SubStatus $($cols[$subStatusColumn-1]) -win32Status $($cols[$win32StatusColumn-1]) -pool $pool -site $site                                    
-                            }
-                            catch
-                            {
-                                Write-Error $_.Exception.ToString()
-                            }
-                            $lineFound = $true
-                            break
-                        }
-                    } # foreach row
-
-                    if(!($lineFound))
-                    {
-                        Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
-                        Process-Problem  -webRoot $webRoot -request $request -Status $request.Status -SubStatus 0 -win32Status 0 -pool $pool -site $site
-                    }
-
-                }   # log file found
-            } # for each request
-        } # end if requests
     } # end process
 
     End
