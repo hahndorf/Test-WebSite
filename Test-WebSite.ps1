@@ -252,6 +252,9 @@ param(
                         Url = $url
                         Ticks = $ticks
                         Status = [int]$resp.StatusCode
+                        SubStatus = 0
+                        Win32 = 0
+                        Processed = $false
                         Html = $result
                         }      
                     
@@ -299,16 +302,12 @@ param(
             [OutputType([int])]
             param(
             [string]$webRoot,
-            $request,
-            [int]$status,
-            [int]$subStatus,
-            [int]$win32Status,
             $pool,
             $site
-            )
-        
-            $fullStatus = "$status.$subStatus"
-            Write-Warning "$($request.Url) - $fullStatus - Win32: $win32Status"
+            )       
+
+            $fullStatus = "$($script:FailedRequest.Status).$($script:FailedRequest.SubStatus)"
+            Write-Warning "$($script:FailedRequest.Url) - $fullStatus - Win32: $($script:FailedRequest.Win32)"
 
             if ($statusInfo.ContainsKey($fullStatus))
             {
@@ -323,7 +322,7 @@ param(
             # to display some information about the problem
             
 
-            $res = $request.Url -replace "^https?://[^/]+", ""
+            $res = $script:FailedRequest.Url -replace "^https?://[^/]+", ""
             $res = $res -replace "/","\"
             $potentialResource = Join-Path $webRoot $res
 
@@ -365,7 +364,7 @@ param(
             # there may be more than one language we just pick the random first one
             $errorPageDir = Get-ChildItem $env:SystemDrive\inetpub\custerr\ | select -First 1
             # get the full file name for the error page
-            $errorPageFile = $status.ToString() + "-" + $subStatus.ToString() + ".htm"
+            $errorPageFile = $script:FailedRequest.Status.ToString() + "-" + $script:FailedRequest.SubStatus.ToString() + ".htm"
             $errorPageFile = Join-Path $errorPageDir.FullName $errorPageFile
 
             if (Test-Path $errorPageFile)
@@ -478,10 +477,7 @@ param(
                 }
             }
 
-      #      $frebDir
-      #      $script:RequestStart
-
-            Exit Get-ExitCode -status $status -sub $subStatus
+            Exit Get-ExitCode -status $script:FailedRequest.Status -sub $script:FailedRequest.SubStatus
         }
 
         Function Check-Prerequisites
@@ -628,8 +624,41 @@ param(
             return $logOkay
         }
 
+        Function Process-Page($site)
+        {
+            $html = $script:FailedRequest.Html
+
+            # this may only work for IIS 8.x
+            $html = $html -replace "&nbsp;",""
+            $html = $html -replace "&raquo;",""         
+            $xml = [Xml]$html
+
+            Write-Verbose "Analyzing error page html"
+          
+            if ( ($xml.html.body.div.div.h3).count -eq 0)
+            {
+                Write-Warning "Detailed local error messages seem not to be enabled"
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`'  -filter `"system.webServer/httpErrors`" -name `"errorMode`" -value `"DetailedLocalOnly`""
+                return
+            }
+
+            $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d\d\d\.(\d\d?)').Groups[1].Value
+            $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
+            # we could get other information from the page
+
+            $script:FailedRequest.Processed = $true
+            
+        }
+
         Function Process-LogEntry($site)
         {
+            $logOkay = Check-LogFile -site $site
+            if ($logOkay -eq $false)
+            {
+                 Write-Warning "Log file settings not as required, log file will not be used"
+                 return
+            }
+
             # flush logbuffer to see log entries right away
             & netsh http flush logbuffer | Out-Null 
 
@@ -643,59 +672,68 @@ param(
                 Write-Warning "Log file not found: $logFileName" 
                 Write-Output "This may happen if none of the bindings for the site work" 
                 Write-Output "Try again using the verbose switch: Test-WebSite.ps1 -verbose "
+                Return
             }
-            else
-            {
-                Write-Verbose "Checking $logFileName"
+           
+            Write-Verbose "Checking $logFileName"
             
-                # we assume the entry we are looking for is the last one, so using -tail 50
-                # gives us for few more, just in case.
+            # we assume the entry we are looking for is the last one, so using -tail 50
+            # gives us for few more, just in case.
 
-                $Log = Get-Content $logFileName -Tail 50 | where {$_ -notLike "#[D,S-V]*" }
+            $Log = Get-Content $logFileName -Tail 50 | where {$_ -notLike "#[D,S-V]*" }
 
-                $fields = ""
-                $statusColumn = 0
+            $fields = ""
+            $statusColumn = 0
 
-                $id = Get-UniqueUserAgent -ticks $script:FailedRequest.Ticks          
-                $lineFound = $false
+            $id = Get-UniqueUserAgent -ticks $script:FailedRequest.Ticks   
+                
+            Write-Verbose "looking for row with: $id"
+                       
+            $lineFound = $false
 
-                foreach ($Row in $Log) {
+            foreach ($Row in $Log) {
 
-                    if ($row.StartsWith("#Fields"))
-                    {
-                        $fields = $row
-                    }
-
-                    if ($row -match $id)
-                    {                  
-                        $fieldColumns = $fields.Split(" ")
-                        $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
-                        $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
-                        $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
-                        $cols = $row.Split(" ") 
-
-                        try
-                        {
-                            Process-Problem  -webRoot $webRoot -request $request -Status $($cols[$statusColumn-1]) -SubStatus $($cols[$subStatusColumn-1]) -win32Status $($cols[$win32StatusColumn-1]) -pool $pool -site $site                                    
-                            $script:requestProcessed = $false
-                        }
-                        catch
-                        {
-                            Write-Error $_.Exception.ToString()
-                        }
-                        $lineFound = $true
-                        break
-                    }
-                } # foreach row
-
-                if(!($lineFound))
+                if ($row.StartsWith("#Fields"))
                 {
-                    Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
-                    Process-Problem  -webRoot $webRoot -request $request -Status $request.Status -SubStatus 0 -win32Status 0 -pool $pool -site $site
-                    $script:requestProcessed = $false
+                    $fields = $row
                 }
 
-                }   # log file found            
+                if ($row -match $id)
+                {                  
+                    $fieldColumns = $fields.Split(" ")
+                    $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
+                    $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
+                    $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
+                    $cols = $row.Split(" ") 
+
+                    $script:FailedRequest.SubStatus = $cols[$subStatusColumn-1]
+                    $script:FailedRequest.Win32 = $cols[$win32StatusColumn-1]
+                    $script:FailedRequest.Processed = $true
+
+                    Write-Verbose "Found: $row"
+
+#                        try
+#                        {
+#                           Process-Problem  -webRoot $webRoot -request $request -Status $($cols[$statusColumn-1]) -SubStatus $($cols[$subStatusColumn-1]) -win32Status $($cols[$win32StatusColumn-1]) -pool $pool -site $site                                    
+#                      #     $script:requestProcessed = $true
+#                        }
+#                        catch
+#                        {
+#                            Write-Error $_.Exception.ToString()
+#                        }
+                    $lineFound = $true
+                    break
+                }
+            } # foreach row
+
+            if(!($lineFound))
+            {
+                Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
+                #   Process-Problem  -webRoot $webRoot -request $request -Status $request.Status -SubStatus 0 -win32Status 0 -pool $pool -site $site
+                #   $script:requestProcessed = $true
+            }
+
+                         
         }
 
         if ($install){Install-IISFeatures; exit 0}
@@ -800,19 +838,18 @@ param(
         }
         else
         {      
-            $script:requestProcessed = $false
-            $logOkay = Check-LogFile -site $site
+            Process-Page -site $site
 
-            if ($logOkay -eq $false)
+            if (!($script:FailedRequest.Processed))
             {
-                Write-Warning "Log file settings not as required, log file will not be used"
-            }
-            else
-            {      
                 Process-LogEntry -site $site
             }
 
-            if (!($script:requestProcessed))
+            if ($script:FailedRequest.Processed)
+            {
+                Process-Problem -webRoot $webRoot -pool $pool -site $site
+            }
+            else
             {
                 Write-Host "Request could not be processed: http status: $status" -ForegroundColor Yellow
             }
