@@ -677,6 +677,7 @@ param(
                         try
                         {
                             Process-Problem  -webRoot $webRoot -request $request -Status $($cols[$statusColumn-1]) -SubStatus $($cols[$subStatusColumn-1]) -win32Status $($cols[$win32StatusColumn-1]) -pool $pool -site $site                                    
+                            $script:requestProcessed = $false
                         }
                         catch
                         {
@@ -691,6 +692,7 @@ param(
                 {
                     Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
                     Process-Problem  -webRoot $webRoot -request $request -Status $request.Status -SubStatus 0 -win32Status 0 -pool $pool -site $site
+                    $script:requestProcessed = $false
                 }
 
                 }   # log file found            
@@ -786,14 +788,7 @@ param(
         Show-TestSuccess -info "Configuration `"$webConfig`" exists"
 
         $script:RequestStart = Get-Date
-      
-        $logOkay = Check-LogFile -site $site
-
-        if ($logOkay -eq $false)
-        {
-            Write-Warning "Log file settings not as required, log file will not be used"
-        }
-        
+             
         $url = Get-Url -site $site -resource $Resource
         $status = Test-WebPage -url $url
 
@@ -805,13 +800,24 @@ param(
         }
         else
         {      
-            if ($logOkay)
+            $script:requestProcessed = $false
+            $logOkay = Check-LogFile -site $site
+
+            if ($logOkay -eq $false)
+            {
+                Write-Warning "Log file settings not as required, log file will not be used"
+            }
+            else
             {      
                 Process-LogEntry -site $site
             }
-        }
 
-    } # end process
+            if (!($script:requestProcessed))
+            {
+                Write-Host "Request could not be processed: http status: $status" -ForegroundColor Yellow
+            }
+        }
+    }
 
     End
     {
