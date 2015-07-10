@@ -135,7 +135,7 @@ param(
 
             Print-SubHeader "Folder permissions for $webRoot"
 
-            (Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
+            ((Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited | Format-Table -AutoSize | out-string).Trim()
 
             $virDirs = Get-WebVirtualDirectory -site "$($site.name)"
 
@@ -177,7 +177,15 @@ param(
             Print-Attribute "ManualGroupMembership" $pm.manualGroupMembership            
         }
 
-        if ($PSVersionTable.PSVersion.Major -lt 3)
+        $myOS = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
+
+        if ([int]$myOS.BuildNumber -lt 7600)
+        {   
+            Write-Warning  "Your OS version is not supported" 
+            Exit 60198 # Access denied.
+        }
+
+        if ([int]$PSVersionTable.PSVersion.Major -lt 3)
         {
             Write-Warning "PowerShell version 3 or newer is required to run this script"
             Exit 60018 # Access denied.
