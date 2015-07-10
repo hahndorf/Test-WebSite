@@ -99,5 +99,5 @@ I plan some major re-factoring later on.
 
 I have two read.me pages for the two scripts with additional information:
 
-- [Show-WebSite](blob/master/show.md) ReadMe
-- [Test-WebSite](blob/master/test.md) ReadMe
+- [Show-WebSite](Show.md) ReadMe
+- [Test-WebSite](Test.md) ReadMe
