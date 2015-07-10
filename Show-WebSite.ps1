@@ -25,7 +25,8 @@
 param(
  [Parameter(Position=0)]
   [string]$Name = "Default Web Site",
-  [alias("server,iis")]
+  [alias("iis")]
+  [alias("server")]
   [switch]$serverlevel
 )
 
