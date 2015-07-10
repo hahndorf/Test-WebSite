@@ -90,7 +90,8 @@ param(
 
             Print-SectionHeader "Operating System:"
 
-            $OSInfo = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
+            $OSInfo = Get-WmiObject -Class Win32_OperatingSystem
+          #  $OSInfo = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
             $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
             Print-Attribute "Caption" $($OSInfo.Caption)
@@ -126,7 +127,7 @@ param(
                  Write-Output ""
                  $($_.SectionPath -replace "/system.webServer/security/authentication/","")
                  Write-Output ""
-                 ($_ | select -expandproperty attributes | Where Name -ne "password" | Select Name,Value | Format-Table -AutoSize | out-string).Trim()
+                 ($_ | select -expandproperty attributes | Where {$_.Name -ne "password"} | Select Name,Value | Format-Table -AutoSize | out-string).Trim()
             }
 
             Show-PoolInfo $pool
@@ -177,7 +178,8 @@ param(
             Print-Attribute "ManualGroupMembership" $pm.manualGroupMembership            
         }
 
-        $myOS = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
+        $myOs = Get-WmiObject -Class Win32_OperatingSystem
+#        $myOS = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
 
         if ([int]$myOS.BuildNumber -lt 7600)
         {   
@@ -185,9 +187,9 @@ param(
             Exit 60198 # Access denied.
         }
 
-        if ([int]$PSVersionTable.PSVersion.Major -lt 3)
+        if ([int]$PSVersionTable.PSVersion.Major -lt 2)
         {
-            Write-Warning "PowerShell version 3 or newer is required to run this script"
+            Write-Warning "PowerShell version 2 or newer is required to run this script"
             Exit 60018 # Access denied.
         }
 
@@ -210,7 +212,7 @@ param(
     }
     Process
     {
-        $site = Get-ChildItem iis:\sites\ | Where name -eq "$name"
+        $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq "$name"}
         if ($site -eq $null)
         {
             Write-Warning "The WebSite `'$name`' could not found"

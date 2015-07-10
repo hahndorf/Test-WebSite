@@ -16,16 +16,22 @@ I also realized there are a lot of things this script could test and many ways i
 
 ### Requirements
 
-- IIS 8.5 (any IIS 7+ may work, not tested)
-- PowerShell 3 or higher
+This will be checked by the scripts.
+
+- IIS 7.5+ (not all tested)
+- Windows 7 SP1 / Windows Server 2008 R2 SP1 or newer
+- PowerShell 2 or higher
 - PowerShell WebAdministration module installed.
-- Windows Server 2012 R2 (others may work)
+
+This means the scripts now work on Windows 7 SP1 with additional downloads.
+
+### Helpful but not required
 - IIS logging with certain settings installed (use -install switch)
 - IIS Failed request tracing installed (use -install switch)
 
 ### Version
 
-0.3 - Some features implemented
+0.4 - Some features implemented
 
 ### Tests
 
@@ -36,8 +42,8 @@ I also realized there are a lot of things this script could test and many ways i
 
 ### Future improvements
 
-- Actually executing the suggested fixes
 - Handle all kind of 400 and 500 responses
+- Actually executing the suggested fixes
 - Configuring Failed Request tracing and analyzing the logs.
 
 ### Installation
@@ -88,3 +94,10 @@ This script installs Failed Request Tracing and when using the -enableFreb switc
 
 For now the code is pretty messy. I just throw things in to get some tests done.
 I plan some major re-factoring later on.
+
+### More Information
+
+I have two read.me pages for the two scripts with additional information:
+
+- [Show-WebSite](show.md) ReadMe
+- [Test-WebSite](test.md) ReadMe

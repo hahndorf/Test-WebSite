@@ -14,7 +14,7 @@
     To indicate that the resource to be checked is expected to be handled by ASP.NET MVC
     Not supported yet
 .PARAMETER install
-    Installs required IIS components.
+    Installs missing IIS components.
 .PARAMETER SkipPrerequisitesChecks
     If specified, several checks for prerequisites are not performed. Because these cecks may take
     some time you can choose to skip them if you are sure you have them.
@@ -39,6 +39,8 @@
     a 404.8 is 40408
     a 500.19 is 50019
 
+    Should work with PowerShell 2 on Windows 7 SP1 and anything newer
+
     Author: Peter Hahndorf
     Date:   July 1, 2015    
 #>
@@ -61,11 +63,8 @@ param(
 
     Begin
     {
-        $UserCurrent = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-        $userIsAdmin = $false
-        $UserCurrent.Groups | ForEach-Object { if($_.value -eq "S-1-5-32-544") {$userIsAdmin = $true} }
-
-        $myOS = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
+    #    $myOS = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
+        $myOS = Get-WmiObject -Class Win32_OperatingSystem
 
         $statusInfo = New-Object 'System.Collections.Generic.dictionary[string,string]'
         $statusInfo.Add("404.0","The file that you are trying to access does not exist")
@@ -75,6 +74,16 @@ param(
 
         $TestDataFullPath = "$env:SystemDrive\Inetpub\TestWebSiteTempData"
         $userAgentRoot = "Test-WebSite"
+
+        if (!($SkipPrerequisitesChecks)) 
+        {
+            # this works on Windows 7+
+            Write-Output "Checking prerequisites..."
+            $tempFile = "$env:temp\TestWindowsFeature.log"
+            & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
+            $WinFeatures = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.State -eq "Enabled "}) | Select Name
+            Remove-Item -Path $tempFile
+        }
 
         Function Get-ExitCode([int]$status,[int]$sub)
         {
@@ -98,14 +107,14 @@ param(
 
         Function Install-IISFeature([string]$name)
         {
-            if ((Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -eq $name -and $_.State -eq "Enabled"}).count -eq 0) 
+            if (Test-WindowsFeature -Name $name) 
             {
-                Write-Output "Running: Enable-WindowsOptionalFeature -Online -FeatureName $name "
-                Enable-WindowsOptionalFeature -Online -FeatureName $name           
+                Write-Output "$name is already installed"
             }
             else
             {
-                Write-Output "$name is already installed"
+                Write-Output "Running: -online -enable-feature -featurename:$name"
+                dism.exe -online -enable-feature -featurename:$name       
             }
         }
 
@@ -116,11 +125,8 @@ param(
                 [Parameter(Mandatory=$true,Position=0)]
                 $Name
             )
-          
-            $tempFile = "$env:temp\TestWindowsFeature.log"
-            & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
-            $feature = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -eq $name -and $_.State.Trim() -eq "Enabled"})
-            Remove-Item -Path $tempFile
+               
+            $feature = ($WinFeatures | Where-Object {$_.Name.Trim() -eq $name})
 
             if ($feature -ne $null)
             {
@@ -130,13 +136,6 @@ param(
             {
                 return $false
             }
-        }
-
-        Function Install-IISFeatures()
-        {
-            Install-IISFeature -name IIS-ManagementScriptingTools
-            Install-IISFeature -name IIS-HttpLogging 
-            Install-IISFeature -name IIS-HttpTracing 
         }
 
         Function Confirm-Command([string]$message)
@@ -506,8 +505,10 @@ param(
         }
 
         Function Check-Prerequisites
-        {
-            Write-Output "Checking prerequisites..."
+        {            
+            $UserCurrent = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+            $userIsAdmin = $false
+            $UserCurrent.Groups | ForEach-Object { if($_.value -eq "S-1-5-32-544") {$userIsAdmin = $true} }
 
             if (!($userIsAdmin))
             {
@@ -516,66 +517,56 @@ param(
                 Exit 40100 # Access denied.
             }
 
-            $componentsMissing = $false
+            if ([int]$myOS.BuildNumber -lt 7601)
+            {   
+                Write-Warning  "Your OS version is not supported" 
+                Exit 60198
+            }
+
+            if ([int]$PSVersionTable.PSVersion.Major -lt 2)
+            {
+                Write-Warning "PowerShell version 2 or newer is required to run this script"
+                Exit 60018
+            }            
 
             if(!(Get-Module -ListAvailable -Name WebAdministration))
             { 
-                Write-Output "WebAdministration module is missing."
-                $componentsMissing = $true
-            }
-
-
-            # checking Get-WindowsOptionalFeature is very slow, so get the features once.
-
-            if ($myOS.BuildNumber -lt 7600)
-            {   
-                Write-Warning  "Your OS version is not supported" 
-                Exit 60198 # Access denied.
-            }
-
-            if ($myOS.BuildNumber -lt 9200) # pre 2012
-            {   
-                if (!(Test-WindowsFeature -Name IIS-HttpLogging))
+                Write-Warning "The required WebAdministration module is missing."
+                Show-PoshCommand "Test-WebSite -install" "Please run:"
+                if ($install)
                 {
-                    Write-Output "HttpLogging module is missing" 
-                    $cponentsMissing = $true                 
+                    Install-IISFeature -name IIS-ManagementScriptingTools
                 }
-                if (($iisFeatures | Where FeatureName -eq IIS-HttpTracing).count -eq 0)
+                else
                 {
-                    Write-Output "Failed Request tracing module is missing" 
-                    $componentsMissing = $true                        
+                    $componentsMissing = $true
                 }
             }
-            else
+
+            $componentsMissing = $false
+
+            if (!(Test-WindowsFeature -Name IIS-HttpLogging))
             {
-                $iisFeatures = Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS" -and $_.State -eq "Enabled"}
-
-                if (($iisFeatures | Where FeatureName -eq IIS-HttpLogging).count -eq 0) 
-                {
-                    Write-Output "HttpLogging module is missing" 
-                    $cponentsMissing = $true          
-                }
-
-                if (($iisFeatures | Where FeatureName -eq IIS-HttpTracing).count -eq 0)
-                {
-                    Write-Output "Failed Request tracing module is missing" 
-                    $componentsMissing = $true                        
-                }                
+                Write-Verbose "HttpLogging module is missing" 
+                $componentsMissing = $true                 
+            }
+            if (!(Test-WindowsFeature -Name IIS-HttpTracing))
+            {
+                Write-Verbose "Failed Request tracing module is missing" 
+                $componentsMissing = $true                        
             }
                        
             if ($componentsMissing)
             {
-                Show-PoshCommand "Test-WebSite -install" "One or more modules are missing, please run:"
-
-                $result = Confirm-Command -message "Install required modules now?"
-
-                switch ($result)
+                if ($install)
                 {
-                    0 {Install-IISFeatures}
-                    1 {}
+                    Install-IISFeature -name IIS-HttpLogging 
+                    Install-IISFeature -name IIS-HttpTracing 
+                }
+                else
+                {
+                    Show-PoshCommand "Test-WebSite -install" "One or more optional modules are missing, for better results you may run:"
                 }   
-            
-                Exit 41200 # Precondition failed    
             }      
         }
 
@@ -758,16 +749,6 @@ param(
                     $script:FailedRequest.Processed = $true
 
                     Write-Verbose "Found: $row"
-
-#                        try
-#                        {
-#                           Process-Problem  -webRoot $webRoot -request $request -Status $($cols[$statusColumn-1]) -SubStatus $($cols[$subStatusColumn-1]) -win32Status $($cols[$win32StatusColumn-1]) -pool $pool -site $site                                    
-#                      #     $script:requestProcessed = $true
-#                        }
-#                        catch
-#                        {
-#                            Write-Error $_.Exception.ToString()
-#                        }
                     $lineFound = $true
                     break
                 }
@@ -776,15 +757,10 @@ param(
             if(!($lineFound))
             {
                 Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
-                #   Process-Problem  -webRoot $webRoot -request $request -Status $request.Status -SubStatus 0 -win32Status 0 -pool $pool -site $site
-                #   $script:requestProcessed = $true
-            }
-
-                         
+            }                         
         }
 
-        if ($install){Install-IISFeatures; exit 0}
-        if (!($SkipPrerequisitesChecks)) {Check-Prerequisites}                
+        if (!($SkipPrerequisitesChecks)) {Check-Prerequisites}
         Import-Module WebAdministration -Verbose:$false
         
     }
@@ -792,7 +768,7 @@ param(
     Process
     {
 
-        $site = Get-ChildItem iis:\sites\ | Where name -eq $name
+        $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq $name}
 
         if ($site -eq $null)
         {
@@ -857,8 +833,6 @@ param(
         {
             Write-Warning "Web.Config file does not exists in the web root"
             Write-Output "Please make sure $webConfig exists."
-          #  Show-PoshCommand -info "$webConfigTemplate | Set-Content $webConfig"
-
             $result = Confirm-Command -message "Create an empty web.config file now?"
 
             switch ($result)
