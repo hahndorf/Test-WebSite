@@ -65,6 +65,8 @@ param(
         $userIsAdmin = $false
         $UserCurrent.Groups | ForEach-Object { if($_.value -eq "S-1-5-32-544") {$userIsAdmin = $true} }
 
+        $myOS = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
+
         $statusInfo = New-Object 'System.Collections.Generic.dictionary[string,string]'
         $statusInfo.Add("404.0","The file that you are trying to access does not exist")
         $statusInfo.Add("404.3","The current MIME mapping for the requested extension type is not valid or is not configured.")
@@ -525,20 +527,42 @@ param(
 
             # checking Get-WindowsOptionalFeature is very slow, so get the features once.
 
-            $iisFeatures = Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS" -and $_.State -eq "Enabled"}
-
-            if (($iisFeatures | Where FeatureName -eq IIS-HttpLogging).count -eq 0) 
-            {
-                Write-Output "HttpLogging module is missing" 
-                $cponentsMissing = $true          
+            if ($myOS.BuildNumber -lt 7600)
+            {   
+                Write-Warning  "Your OS version is not supported" 
+                Exit 60198 # Access denied.
             }
 
-            if (($iisFeatures | Where FeatureName -eq IIS-HttpTracing).count -eq 0)
-            {
-                Write-Output "Failed Request tracing module is missing" 
-                $componentsMissing = $true                        
+            if ($myOS.BuildNumber -lt 9200) # pre 2012
+            {   
+                if (!(Test-WindowsFeature -Name IIS-HttpLogging))
+                {
+                    Write-Output "HttpLogging module is missing" 
+                    $cponentsMissing = $true                 
+                }
+                if (($iisFeatures | Where FeatureName -eq IIS-HttpTracing).count -eq 0)
+                {
+                    Write-Output "Failed Request tracing module is missing" 
+                    $componentsMissing = $true                        
+                }
             }
+            else
+            {
+                $iisFeatures = Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS" -and $_.State -eq "Enabled"}
 
+                if (($iisFeatures | Where FeatureName -eq IIS-HttpLogging).count -eq 0) 
+                {
+                    Write-Output "HttpLogging module is missing" 
+                    $cponentsMissing = $true          
+                }
+
+                if (($iisFeatures | Where FeatureName -eq IIS-HttpTracing).count -eq 0)
+                {
+                    Write-Output "Failed Request tracing module is missing" 
+                    $componentsMissing = $true                        
+                }                
+            }
+                       
             if ($componentsMissing)
             {
                 Show-PoshCommand "Test-WebSite -install" "One or more modules are missing, please run:"

@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-    Shows information about your IIS Web site
+    Shows information about an IIS Web site
 .DESCRIPTION
     Creates a report about your server environment
     You can include this report when asking for help online.
-    You may want to remove certain information from that report.
+    You may want to remove certain information from the report.
 .PARAMETER Name
-    The name of the web site to test, as seen in IIS Manager or 'Get-WebSite'
+    The name of the web site to gather information for, as seen in IIS Manager or 'Get-WebSite'
 .PARAMETER serverlevel
     If present, server level information will be included 
 .EXAMPLE       
@@ -34,6 +34,7 @@ param(
     {
         [int]$separatorWith = 70
 
+        # a bunch of helper functions:
         Function Print-Attribute([string]$caption,[string]$value)
         {
             $caption = $caption + ":"
@@ -62,8 +63,6 @@ param(
             Print-Stuff "$text"
             Print-Stuff ("-" * $separatorWith)
         }
-
-
 
         Function Show-ServerLevelInfo()
         {
@@ -108,7 +107,6 @@ param(
             Print-SubHeader "Bindings"
 
             (($site | Select -expandproperty bindings).collection | format-table -AutoSize | Out-String).Trim()
-
             
             $limits = ($site | Select -expandproperty limits).collection
             if ($limits.count -gt 0)
@@ -123,11 +121,12 @@ param(
             Print-SubHeader "Error Pages"
             (Get-WebConfiguration "system.webserver/httpErrors" "IIS:\sites\$($site.name)" | Format-Table -Property ErrorMode,existingResponse,defaultResponseMode  -AutoSize | Out-String).Trim()
 
-
             Print-SubHeader "Authentication"
-            Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\test" | Sort-Object SectionPath | foreach{
-                $($_.SectionPath -replace "/system.webServer/security/authentication/","")
-                 $_ | select -expandproperty attributes | Where Name -ne "password" | Select Name,Value | Format-Table -AutoSize
+            Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\$($site.Name)" | Sort-Object SectionPath | foreach{
+                 Write-Output ""
+                 $($_.SectionPath -replace "/system.webServer/security/authentication/","")
+                 Write-Output ""
+                 ($_ | select -expandproperty attributes | Where Name -ne "password" | Select Name,Value | Format-Table -AutoSize | out-string).Trim()
             }
 
             Show-PoolInfo $pool
@@ -178,6 +177,12 @@ param(
             Print-Attribute "ManualGroupMembership" $pm.manualGroupMembership            
         }
 
+        if ($PSVersionTable.PSVersion.Major -lt 3)
+        {
+            Write-Warning "PowerShell version 3 or newer is required to run this script"
+            Exit 60018 # Access denied.
+        }
+
         $UserCurrent = [System.Security.Principal.WindowsIdentity]::GetCurrent()
         $userIsAdmin = $false
         $UserCurrent.Groups | ForEach-Object { if($_.value -eq "S-1-5-32-544") {$userIsAdmin = $true} }
@@ -189,7 +194,7 @@ param(
 
         if(!(Get-Module -ListAvailable -Name WebAdministration))
         { 
-            Write-Output "WebAdministration module is missing."
+            Write-Warning "WebAdministration module is missing."
             Exit 41200 # Access denied.
         }
 
