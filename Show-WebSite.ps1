@@ -76,12 +76,12 @@ param(
             # the following works in Win7/2008R2 and newer           
             $tempFile = "$env:temp\TestWindowsFeature.log"
             & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
-            Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort Name | Select Name | Format-Table -HideTableHeaders
+            (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()
             Remove-Item -Path $tempFile -Force
 
             Print-SubHeader "Global Modules"
             
-            (Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select Name | Format-Table -HideTableHeaders      
+            ((Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()     
         }
 
         Function Show-SiteInfo($site,$pool)
@@ -106,14 +106,22 @@ param(
             
             Print-SubHeader "Bindings"
 
-            ($site | Select -expandproperty bindings).collection | format-table -AutoSize
+            (($site | Select -expandproperty bindings).collection | format-table -AutoSize | Out-String).Trim()
 
-            Print-SubHeader "Limits"
-
-            ($site | Select -expandproperty limits).collection |format-table -AutoSize
+            
+            $limits = ($site | Select -expandproperty limits).collection
+            if ($limits.count -gt 0)
+            {
+                Print-SubHeader "Limits"
+                ($limits |format-table -AutoSize | Out-String).Trim()
+            }
 
             Print-SubHeader "Default Documents"
-            Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | Format-Table -HideTableHeaders
+            (Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | Format-Table -HideTableHeaders  | Out-String).Trim()
+
+            Print-SubHeader "Error Pages"
+            (Get-WebConfiguration "system.webserver/httpErrors" "IIS:\sites\$($site.name)" | Format-Table -Property ErrorMode,existingResponse,defaultResponseMode  -AutoSize | Out-String).Trim()
+
 
             Print-SubHeader "Authentication"
             Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\test" | Sort-Object SectionPath | foreach{
@@ -129,7 +137,23 @@ param(
 
             (Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
 
-        }
+            $virDirs = Get-WebVirtualDirectory -site "$($site.name)"
+
+            if ($virDirs.count -gt 0)
+            {
+                Print-SectionHeader "Virtual Directories"
+                ($virDirs | Format-Table -Property Path,PhysicalPath,AllowSubDirConfig,UserName  -AutoSize | Out-String).Trim()
+            }
+
+            $apps = Get-WebApplication -site "$($site.name)"
+            
+            if ($apps.count -gt 0)
+            {
+                Print-SectionHeader "Applications"
+                ($apps | Select Path,PhysicalPath,applicationPool | Format-Table -AutoSize | Out-String).Trim()
+            }
+
+         }
 
         Function Show-PoolInfo($pool)
         {
@@ -178,7 +202,7 @@ param(
             Write-Warning "The WebSite `'$name`' could not found"
 
             Write-Host "Existing sites on this server:"
-            Get-ChildItem iis:\sites | Select Name | Format-Table -HideTableHeaders
+            Get-ChildItem iis:\sites | Select Name | Format-Table -HideTableHeaders -AutoSize
 
             Exit 60015 # Not Found
         }
