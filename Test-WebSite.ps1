@@ -107,6 +107,29 @@ param(
             }
         }
 
+        Function Test-WindowsFeature()
+        {
+            Param
+            (
+                [Parameter(Mandatory=$true,Position=0)]
+                $Name
+            )
+          
+            $tempFile = "$env:temp\TestWindowsFeature.log"
+            & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
+            $feature = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -eq $name -and $_.State.Trim() -eq "Enabled"})
+            Remove-Item -Path $tempFile
+
+            if ($feature -ne $null)
+            {
+                return $true
+            }
+            else
+            {
+                return $false
+            }
+        }
+
         Function Install-IISFeatures()
         {
             Install-IISFeature -name IIS-ManagementScriptingTools

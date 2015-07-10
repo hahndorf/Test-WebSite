@@ -13,8 +13,8 @@
     Show-WebSite
     Shows information for 'Default Web Site'
 .EXAMPLE       
-    Show-WebSite -Name MySite | out-file $env:userprofile\Downloads\mysitereport.txt
-    Collects information for 'MySite' and saves it into a file
+    Show-WebSite -Name MySite -serverlevel | out-file $env:userprofile\Downloads\mysitereport.txt
+    Collects information for 'MySite' including server level data and saves it into a file
 .NOTES
     Author: Peter Hahndorf
     Date:   July 5th, 2015    
@@ -62,13 +62,22 @@ param(
             Print-Stuff ("-" * $separatorWith)
         }
 
+
+
         Function Show-ServerLevelInfo()
         {
             Print-SectionHeader "information about IIS:"
 
             Print-SubHeader "Installed IIS Components"
 
-            Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS-" -and $_.State -eq "Enabled"} | Sort FeatureName | Select FeatureName | Format-Table -HideTableHeaders
+            # works in 6.2 and newer only
+            # Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS-" -and $_.State -eq "Enabled"} | Sort FeatureName | Select FeatureName | Format-Table -HideTableHeaders
+
+            # the following works in Win7/2008R2 and newer           
+            $tempFile = "$env:temp\TestWindowsFeature.log"
+            & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
+            Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort Name | Select Name | Format-Table -HideTableHeaders
+            Remove-Item -Path $tempFile -Force
 
             Print-SubHeader "Global Modules"
             
