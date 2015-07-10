@@ -16,14 +16,14 @@ I also realized there are a lot of things this script could test and many ways i
 
 ### Requirements
 
-This will be checked by the scripts.
+These are checked by the scripts.
 
 - IIS 7.5+ (not all tested)
-- Windows 7 SP1 / Windows Server 2008 R2 SP1 or newer
+- Windows Server 2008 R2 (or Windows 7) with SP1 or newer
 - PowerShell 2 or higher
 - PowerShell WebAdministration module installed.
 
-This means the scripts now work on Windows 7 SP1 with additional downloads.
+This means the scripts now work on Windows 7 SP1 without any additional downloads.
 
 ### Helpful but not required
 - IIS logging with certain settings installed (use -install switch)
@@ -99,5 +99,5 @@ I plan some major re-factoring later on.
 
 I have two read.me pages for the two scripts with additional information:
 
-- [Show-WebSite](show.md) ReadMe
-- [Test-WebSite](test.md) ReadMe
+- [Show-WebSite](blob/master/show.md) ReadMe
+- [Test-WebSite](blob/master/test.md) ReadMe
