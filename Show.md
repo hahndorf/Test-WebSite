@@ -57,7 +57,7 @@ You need to have at least Windows 7 / Server 2008 R2 or newer to use this script
 
 ### PowerShell Version
 
-    WARNING: PowerShell version 3 or newer is required to run this script
+    WARNING: PowerShell version 2 or newer is required to run this script
 
 Please install the latest version of PowerShell, 4 or even 5.
 
