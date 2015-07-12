@@ -1,7 +1,7 @@
 ######################################################################################
 # Integration Tests for Test-WebSite
 # 
-# There tests will make changes to your system, we are tyring to roll them back,
+# These tests will make changes to your system, we are tyring to roll them back,
 # but you never know. Best to run this on a throwaway VM.
 # Run as an elevated administrator 
 ######################################################################################
@@ -63,8 +63,6 @@ Describe "Test-WebSite" {
 
         It 'EmptyWeb' -test {
         {            
-            # Cannot read configuration file due to insufficient permissions
-
             $webRoot = Join-Path $tempFolder "test4"
             New-Item -Path $webRoot -ItemType Directory
             $webConfig = Join-Path $webRoot "web.config"
@@ -98,10 +96,38 @@ Describe "Test-WebSite" {
             }  | should not throw
 
             $lastexitcode | should be 20000
-        }            
+        }     
+        
+        
+        It 'BrokenWebConfigXML' -test {
+        {            
+            $webRoot = Join-Path $tempFolder "test5"
+            New-Item -Path $webRoot -ItemType Directory
+            $webConfig = Join-Path $webRoot "web.config"
+
+        $webConfigTemplate = @"
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <system.webServerx>
+    </system.webServer>
+</configuration>        
+"@
+
+            $webConfigTemplate | Set-Content $webConfig
+
+            New-Website -Name Test5 -PhysicalPath $webRoot -Port 10005 -id 10005
+            
+            & .\Test-WebSite.ps1 -Name Test5 -SkipPrerequisitesChecks -DontOfferFixes
+             }  | should not throw
+
+            $lastexitcode | should be 50019
+        }               
 
 #        It 'Web1' -test {
 #        {      
+
+            # Cannot read configuration file due to insufficient permissions
+
 #            $webRoot = Join-Path $tempFolder "test4"
 #            $webConfig = Join-Path $webRoot "web.config"
 
@@ -121,14 +147,18 @@ Describe "Test-WebSite" {
     finally
     {
         # enable sleep to see what happened to IIS before rolling back
-     #   Start-Sleep -Seconds 20
+        # uncomment this during debugging
+        # Start-Sleep -Seconds 20
 
         # roll back our changes
         Restore-WebConfiguration -Name $tempName
         Remove-WebConfigurationBackup -Name $tempName
 
         # remove the generated MoF files
-   #     Get-ChildItem "$env:SystemDrive\inetpub\$tempName" | Remove-item -Recurse -Force
-   #     Remove-item "$env:SystemDrive\inetpub\$tempName" -Force
+        Get-ChildItem "$env:SystemDrive\inetpub\$tempName" | Remove-item -Recurse -Force
+        Remove-item "$env:SystemDrive\inetpub\$tempName" -Force
+        # remove log files
+        Start-Sleep -Milliseconds 50
+        Get-ChildItem "$env:SystemDrive\inetpub\logs\LogFiles" | Where {$_.Name -match "^W3SVC1000"} | Remove-item -Recurse -Force
     } 
 }

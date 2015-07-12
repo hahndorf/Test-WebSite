@@ -681,7 +681,11 @@ param(
             }
 
             $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d\d\d\.(\d\d?)').Groups[1].Value
-            $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
+            if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
+            {
+                 $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
+            }
+            
             # we could get other information from the page
 
             $script:FailedRequest.Processed = $true
