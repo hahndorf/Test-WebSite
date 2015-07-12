@@ -19,7 +19,7 @@ I also realized there are a lot of things this script could test and many ways i
 These are checked by the scripts.
 
 - IIS 7.5+ (not all tested)
-- Windows Server 2008 R2 (or Windows 7) with SP1 or newer
+- Windows Server 2008 R2 (or Windows 7) with SP1 or newer. Nano Server is not supported.
 - PowerShell 2 or higher
 - PowerShell WebAdministration module installed.
 

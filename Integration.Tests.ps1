@@ -147,14 +147,18 @@ Describe "Test-WebSite" {
     finally
     {
         # enable sleep to see what happened to IIS before rolling back
-     #   Start-Sleep -Seconds 20
+        # uncomment this during debugging
+        # Start-Sleep -Seconds 20
 
         # roll back our changes
         Restore-WebConfiguration -Name $tempName
         Remove-WebConfigurationBackup -Name $tempName
 
         # remove the generated MoF files
-   #     Get-ChildItem "$env:SystemDrive\inetpub\$tempName" | Remove-item -Recurse -Force
-   #     Remove-item "$env:SystemDrive\inetpub\$tempName" -Force
+        Get-ChildItem "$env:SystemDrive\inetpub\$tempName" | Remove-item -Recurse -Force
+        Remove-item "$env:SystemDrive\inetpub\$tempName" -Force
+        # remove log files
+        Start-Sleep -Milliseconds 50
+        Get-ChildItem "$env:SystemDrive\inetpub\logs\LogFiles" | Where {$_.Name -match "^W3SVC1000"} | Remove-item -Recurse -Force
     } 
 }
