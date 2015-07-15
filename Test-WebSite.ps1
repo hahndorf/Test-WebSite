@@ -280,6 +280,9 @@ param(
                         Win32 = 0
                         Processed = $false
                         Html = $result
+                        Server = $resp.Headers["Server"] 
+                        ContentLength = $resp.Headers["Content-Length"] 
+                        ContentType = $resp.Headers["Content-Type"]
                         }      
                     
                     return [int]$resp.StatusCode                
@@ -436,6 +439,12 @@ param(
                 {
                     Write-Output "Configuration "
                 }  
+            }
+            elseif ($fullStatus -eq "503.0")
+            {             
+                Write-Output "Service Unavailable"
+                Write-Output "Check the account of the application pool. Is the password correct and not expired?"
+                Write-Output "TO-DO: get account name and check account status"
             }
             elseif ($fullStatus -eq "401.3")
             {
@@ -666,24 +675,49 @@ param(
         {
             $html = $script:FailedRequest.Html
 
-            # this may only work for IIS 8.x
-            $html = $html -replace "&nbsp;",""
-            $html = $html -replace "&raquo;",""         
-            $xml = [Xml]$html
-
             Write-Verbose "Analyzing error page html"
-          
-            if ( ($xml.html.body.div.div.h3).count -eq 0)
-            {
-                Write-Warning "Detailed local error messages seem not to be enabled"
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`'  -filter `"system.webServer/httpErrors`" -name `"errorMode`" -value `"DetailedLocalOnly`""
-                return
-            }
 
-            $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d\d\d\.(\d\d?)').Groups[1].Value
-            if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
+            if ($html.Length -lt 1000)
             {
-                 $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
+                if ($script:FailedRequest.Server -eq "Microsoft-HTTPAPI/2.0")
+                {
+                    Write-Warning "IIS was unable to find a running application pool"
+
+                    # the logs may have moved, HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\HTTP\Parameters\ErrorLoggingDir
+                    $logFileName = (Get-ChildItem $env:systemRoot\system32\LogFiles\HTTPERR\ | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+
+                    if ($logFileName -ne $null)
+                    {
+                        Write-Output "Checking http.sys log: $logFileName"
+                        $Log = Get-Content $logFileName -Tail 5 | Where-Object {$_ -notLike "#*" }
+                        Write-output "Here are the last 5 lines, time is UTC"                       
+                        $Log
+                    }                    
+                }   
+                else
+                {
+                    Write-Warning "Short response, but not from Microsoft-HTTPAPI/2.0, what can it be?"
+                }             
+            }
+            else
+            {
+                # this may only work for IIS 8.x
+                $html = $html -replace "&nbsp;",""
+                $html = $html -replace "&raquo;",""         
+                $xml = [Xml]$html                
+          
+                if ( ($xml.html.body.div.div.h3).count -eq 0)
+                {
+                    Write-Warning "Detailed local error messages seem not to be enabled"
+                    Show-PoshCommand -info "Set-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`'  -filter `"system.webServer/httpErrors`" -name `"errorMode`" -value `"DetailedLocalOnly`""
+                    return
+                }
+
+                $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d\d\d\.(\d\d?)').Groups[1].Value
+                if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
+                {
+                     $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
+                }
             }
             
             # we could get other information from the page
