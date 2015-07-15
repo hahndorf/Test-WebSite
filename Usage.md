@@ -4,25 +4,25 @@
 
 There are several ways to get the script file to your computer, download the zip, clone the repository, save the content manually into a file. If you just need one script you can run one of the following commands in PowerShell:
 
-**Test-WebSite.ps1:**
+Open an elevated PowerShell, first cd into a directory of your choice to store the scripts in, e.g.:
 
-	(New-Object net.WebClient).DownloadString('https://raw.githubusercontent.com/hahndorf/Test-WebSite/master/Test-WebSite.ps1') | out-file $env:userprofile\downloads\Show-WebSite.ps1 -force 
+	cd ~\Downloads
 
-**Show-WebSite.ps1:**
+**To download Test-WebSite.ps1:**
 
-	(New-Object net.WebClient).DownloadString('https://raw.githubusercontent.com/hahndorf/Test-WebSite/master/Show-WebSite.ps1') | out-file $env:userprofile\downloads\Show-WebSite.ps1 -force
+	(New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/hahndorf/Test-WebSite/master/Test-WebSite.ps1') | out-file .\Test-WebSite.ps1 -force 
 
-**Show-WebServer.ps1:**
+**To download Show-WebSite.ps1:**
 
-	(New-Object net.WebClient).DownloadString('https://raw.githubusercontent.com/hahndorf/Test-WebSite/master/Show-WebServer.ps1') | out-file $env:userprofile\downloads\Show-WebSite.ps1 -force
+	(New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/hahndorf/Test-WebSite/master/Show-WebSite.ps1') | out-file .\Show-WebSite.ps1 -force
 
-After downloading a PowerShell script from the Internet, you should always review it to make sure it doesn't do anything bad, especially because we have to run it as an elevated administrator. The script was saved to your downloads folder.
+**To download Show-WebServer.ps1:**
+
+	(New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/hahndorf/Test-WebSite/master/Show-WebServer.ps1') | out-file .\Show-WebServer.ps1 -force
+
+After downloading a PowerShell script from the Internet, you should always review it to make sure it doesn't do anything bad, especially because we have to run it as an elevated administrator. 
 
 ##Running the scripts
-
-Open an elevated PowerShell and run:
-
-	cd $env:userprofile\downloads\
 
 or where ever you saved the script files. Then run the script itself:
 
