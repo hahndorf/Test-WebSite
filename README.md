@@ -1,5 +1,5 @@
 # Test-WebSite
-A PowerShell script to test an IIS website for the most common setup problems.
+A collection of PowerShell scripts to test an IIS website for the most common setup problems.
 
 ### Description
 
@@ -14,30 +14,37 @@ So if anybody could run this script before asking a question and providing the i
 
 I also realized there are a lot of things this script could test and many ways in which it could break. So there is still a lot of work to do.
 
-### Requirements
+There are currently three scripts: **Test-WebSite.ps1** is the main one and performs various tests against a web site. **Show-WebSite.ps1** and **Show-WebServer.ps1** simply display information which may be helpful for troubleshooting.
 
-These are checked by the scripts.
+### Requirements
 
 - IIS 7.5+ (not all tested)
 - Windows Server 2008 R2 (or Windows 7) with SP1 or newer. Nano Server is not supported.
 - PowerShell 2 or higher
 - PowerShell WebAdministration module installed.
 
-This means the scripts now work on Windows 7 SP1 without any additional downloads.
+This means the scripts run on Windows 7 SP1 without any additional downloads.
+
+### Installation and Usage
+
+- [How to get, run and troubleshoot the scripts](Usage.md)
 
 ### Helpful but not required
 - IIS logging with certain settings installed (use -install switch)
 - IIS Failed request tracing installed (use -install switch)
 
-### Version
+### Version History
 
-0.4 - Some features implemented
+- 0.5 - Added Show-WebServer.ps1
+- 0.4 - More features implemented
+- 0.3 - Added Show-WebSite.ps1
+- 0.2 - First working tests
 
 ### Tests
 
-- Is the site running
-- Is the application pool running
-- Does a web.config file exists in the root
+- Is the site running?
+- Is the application pool running?
+- Does a web.config file exists in the root?
 - Does a request return a 200, if not what's the sub-status code?
 
 ### Future improvements
@@ -46,13 +53,9 @@ This means the scripts now work on Windows 7 SP1 without any additional download
 - Actually executing the suggested fixes
 - Configuring Failed Request tracing and analyzing the logs.
 
-### Installation
-
-Just copy the Test-WebSite.ps1 file and run it elevated on your IIS box.
-
 ### Example output:
 
-    ^D:\: .\Test-WebSite.ps1 -Resource /no.html
+    .\Test-WebSite.ps1 -Resource /no.html
 
     Test: WebSite: "Default Web Site" exists
     Test: WebSite: "Default Web Site" is running
@@ -95,9 +98,4 @@ This script installs Failed Request Tracing and when using the -enableFreb switc
 For now the code is pretty messy. I just throw things in to get some tests done.
 I plan some major re-factoring later on.
 
-### More Information
 
-I have two read.me pages for the two scripts with additional information:
-
-- [Show-WebSite](Show.md) ReadMe
-- [Test-WebSite](Test.md) ReadMe
