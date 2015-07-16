@@ -1,10 +1,11 @@
-# Using the script
+# Using Test-WebSite.ps1
 
 ##Getting the script
 
-There are several ways to get the script file to your computer, download the zip, clone the repository, save the content manually into a file. You can also run the following commands in PowerShell:
+There are several ways to get the script file to your computer, download the zip, clone the repository, save the content manually into a file. 
+You can also get it with PowerShell:
 
-Open an elevated PowerShell, first cd into a directory of your choice to store the script in, e.g.:
+Open an elevated PowerShell window, first cd into a directory of your choice to store the script in, e.g.:
 
 	cd ~\Downloads
 
@@ -16,15 +17,11 @@ After downloading a PowerShell script from the Internet, you should always revie
 
 ##Running the script
 
-Assuming you are still in the location you downloaded the script to, run it:
-
-    .\Test-WebSite.ps1
-
-The script can be started with certain parameters, to find out more about them:
+Assuming you are still in the location you downloaded the script to, find out more about the parameters you can use for the script:
 
     help .\Test-WebSite.ps1 -full
 
-The most common parameters are:
+The most common use cases are:
 
 ### Show server information
 
@@ -38,13 +35,13 @@ The most common parameters are:
 
 To save the output into a file use:
 
-    .\Test-WebSite.ps1 -Name siteName | Out-File "$env:userprofile\documents\info.txt"
+    .\Test-WebSite.ps1 -Name siteName | Out-File "~\documents\info.txt"
 
 To include the content of the output file in your support question, first run
 
-    notepad "$env:userprofile\documents\info.txt"
+    notepad "~\documents\info.txt"
 
-then review the text and remove anything who don't want to share with the support community. Use the rest as part of your support request.
+then review the text and remove anything you don't want to share with the support community. Use the rest as part of your support request.
 
 More information can be found in the [main read.me](https://github.com/hahndorf/Test-WebSite)
 

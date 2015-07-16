@@ -4,7 +4,7 @@ A PowerShell script to test an IIS website for the most common setup problems.
 ### Description
 
 You should run this when you are having a problem with your site setup on IIS.
-After checking a few things the script calls a page on your site, if it doesn't return an http status of 200, it tries to find out more about the problem.
+After checking a few things the script downloads a resource from your local site, if it doesn't return an http status of 200, it tries to find out more about the problem.
 It also tries to suggest various things to fix the problem.
 
 I often answer questions about IIS on [serverfault.com](http://serverfault.com), [stackoverflow.com](http://stackoverflow.com/) or [forums.iis.com](http://forums.iis.net/) and often people provide very little information about their problem.
@@ -12,9 +12,9 @@ Nearly always it would be helpful to know the sub-status code and people should 
 
 So if anybody could run this script before asking a question and providing the information it outputs, that would be very helpful for people answering questions.
 
-I also realized there are a lot of things this script could test and many ways in which it could break. So there is still a lot of work to do.
+I realized there are a lot of things this script could test and many ways in which it could break. So there is still a lot of work to do. So consider this a Beta.
 
-The script can either just display information about the server (-ShowServer) or a web site (-Show) and also run some tests against a single web site.
+The script can either just display information about the server (-ShowServer) or a web site (-ShowSite) but its primary function is to run some tests against a single web site.
 
 The displayed information should be helpful for troubleshooting.
 
@@ -26,10 +26,11 @@ The displayed information should be helpful for troubleshooting.
 - PowerShell WebAdministration module installed.
 
 This means the scripts run on Windows 7 SP1 without any additional downloads.
+It may work on Server 2008, but you have to install PowerShell 2 and the IIS PowerShell module.
 
 ### Installation and Usage
 
-- [How to get, run and troubleshoot the scripts](Usage.md)
+- [How to get, run and troubleshoot the script](Usage.md)
 
 ### Version History
 
@@ -48,13 +49,13 @@ This means the scripts run on Windows 7 SP1 without any additional downloads.
 
 ### Future improvements
 
-- Handle all kinds of 400 and 500 responses
+- Handle all kinds of 400 and 500 responses by providing more information.
 - Actually executing the suggested fixes
 - Configuring Failed Request tracing and analyzing the logs.
 
-### Helpful but not required
-- IIS logging with certain settings installed (use -install switch)
-- IIS Failed request tracing installed (use -install switch)
+### Optional IIS components
+- IIS logging with certain settings installed (use -install switch). This may be used to find the sub-status code of a response.
+- IIS Failed request tracing installed (use -install switch). 
 
 ### Example output:
 
