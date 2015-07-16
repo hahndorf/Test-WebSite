@@ -69,7 +69,7 @@ Describe "Test-WebSite" {
 
             New-Website -Name Test3 -PhysicalPath $webRoot -Port 10003 -id 10003
             
-            & .\Test-WebSite.ps1 -Name Test3 -DontOfferFixes
+            & .\Test-WebSite.ps1 -Name Test3 -DontOfferFixes -BeStrict
             }  | should not throw
 
             $lastexitcode | should be $WebConfigMissing
@@ -175,6 +175,7 @@ Describe "Test-WebSite" {
         # remove the generated MoF files
         Get-ChildItem "$env:SystemDrive\inetpub\$tempName" | Remove-item -Recurse -Force
         Get-ChildItem "$env:SystemDrive\inetpub\$tempName"  -Recurse | Remove-Item -Force -Recurse
+        Remove-Item "$env:SystemDrive\inetpub\$tempName"
         # remove log files
         
         Get-ChildItem "$env:SystemDrive\inetpub\logs\LogFiles" | Where {$_.Name -match "^W3SVC1000"} | Remove-item -Recurse -Force

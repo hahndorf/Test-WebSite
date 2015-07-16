@@ -11,6 +11,8 @@
     the url part of the resource to test starting with the with slash after the hostname/port
     on the full url. Always start with a forward slash. If empty, the home page of the site will
     be tested.
+    You can also specify a full address like http://www.mysite.com/index.php but is should resolve to the site you want to test.
+    This way you can force testing multiple bindings of the site. 
 .PARAMETER Mvc
     To indicate that the resource to be checked is expected to be handled by ASP.NET MVC
     Not supported yet
@@ -23,22 +25,34 @@
     Shows information about the web site, does not run any tests
 .PARAMETER ShowServer
     Shows information about the IIS server, does not run any tests. Use -verbose for more information
-.PARAMETER DontOfferFixes
-    If specified, the user will never be asked to run fixes. Useful for automated testing
 .PARAMETER EnableFreb
-    Enables Failed Request tracing, but just for the http status a problem was found for.
+    Enables Failed Request tracing for the site for all requests with a status of 400 or higher
     Overrites previously existing tracing rules for the site.
 .PARAMETER DisableFreb
     Disables Failed Request tracing for the site and removes all tracings rules.
+.PARAMETER OutputFile
+    Specifies a file to write output to. Use this rather than piping the output into a file.
+    Some information may get lost during piping.
+.PARAMETER DontOfferFixes
+    If specified, the user will never be asked to run fixes. Useful for automated testing
+.PARAMETER BeStrict
+   If specified, certain warnings will be considered stop-problems Useful for automated testing
 .EXAMPLE       
     Test-WebSite
     Runs the tests against the web site named 'Default Web Site'
 .EXAMPLE       
-    Test-WebSite -Name MySite -Resource "/login.asp?user=foo"
+    Test-WebSite -Name MySite -Resource "/login.asp?user=foo" -OutputFile "~\documents\report.txt"
     Runs the tests against the specified resource on the web site named 'MySite'.
+    Writes results to the console and also into the specified file.
+.EXAMPLE       
+    Test-WebSite -Name MySite -DontOfferFixes
+    The script tests for the existance of a web.config file in the root of the site
+    If it doesn't find it, it will offer to create and and then stops the script.
+    If you don't want to create one and skip this test, use -DontOfferFixes
 .EXAMPLE
-    Test-WebSite -Name MySite -Resource "/foo.html" -verbose
+    Test-WebSite -Name MySite -Resource "http://test.mysite.com/foo.html" -verbose
     Runs the tests against the specified resource on the web site named 'MySite'.
+    The URL and the site bindings should match.
     Includes additional information about the tests performed
 .EXAMPLE       
     Test-WebSite -ShowSite -name MySite
@@ -50,6 +64,14 @@
     Test-WebSite -showServer -verbose
     Shows information about the web server including all sites and AppPools
     Includes information about the installed IIS modules
+.EXAMPLE       
+    Test-WebSite -name MySite -EnableFreb
+    Enables 'Failed Request Tracing' for the site 'MySite'
+    You can use this independent of running the test.
+    When enabled, the result files will be available in a location accessible to a normal user.
+.EXAMPLE       
+    Test-WebSite -name MySite -DisableFreb
+    Disables 'Failed Request Tracing' for the site 'MySite'
 
 .NOTES
 
@@ -75,10 +97,16 @@ param(
   [switch]$ShowSite,
   [parameter(Mandatory=$true,ParameterSetName = "Server")]
   [switch]$ShowServer,
+  [parameter(Mandatory=$true,ParameterSetName = "EnFreb")]
+  [switch]$EnableFreb,
+  [parameter(Mandatory=$true,ParameterSetName = "DisFreb")]
+  [switch]$DisableFreb,
   [parameter(Mandatory=$true,ParameterSetName = "Install")]
   [switch]$Install,
   [Parameter(Position=0,ParameterSetName = "Test")]
   [parameter(ParameterSetName = "ShowSite")]
+  [parameter(ParameterSetName = "DisFreb")]
+  [parameter(ParameterSetName = "EnFreb")]
   [string]$Name = "Default Web Site",
   [ValidatePattern("^(http*|/[-\?/\.=&a-z0-9]*)")]
   [parameter(ParameterSetName = "Test")]
@@ -90,9 +118,11 @@ param(
   [parameter(ParameterSetName = "Test")]
   [switch]$DontOfferFixes,
   [parameter(ParameterSetName = "Test")]
-  [switch]$EnableFreb,
+  [switch]$BeStrict,
   [parameter(ParameterSetName = "Test")]
-  [switch]$DisableFreb
+  [parameter(ParameterSetName = "ShowSite")]
+  [parameter(ParameterSetName = "Server")]
+  [string]$OutputFile = ""
 )
 
     # we don't support input from the pipeline, we don't need begin, process, end
@@ -100,7 +130,6 @@ param(
 
     Begin
     {
-
     #    $myOS = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
         $myOS = Get-WmiObject -Class Win32_OperatingSystem
 
@@ -161,20 +190,63 @@ param(
         [int]$WebSuccess = 20000
         [int]$ExitAccessDenied = 40100 
         [int]$OSVersionNotSupported = 60198 
-        [int]$PowerShellVersionNotSupported = 60018 
-        [int]$WebAdministrationModuleMissing = 60019 
-        [int]$WebSiteNotFound = 60015 
         [int]$AppPoolNotFound = 60010 
         [int]$WebSiteNotRunning = 60001
         [int]$AppPoolNotRunning = 60011
-        [int]$WebConfigMissing = 60062        
-
+        [int]$NoUrlProvided = 60013 
+        [int]$NoBindingFound = 60014 
+        [int]$WebSiteNotFound = 60015 
+        [int]$PowerShellVersionNotSupported = 60018 
+        [int]$WebAdministrationModuleMissing = 60019
+        [int]$WebConfigMissing = 60062  
+      
         # Infrastucture functions
+
+        Function Publish-TextToFile([string]$text)
+        {
+            if ($OutputFile -ne "")
+            {
+                $text | Out-File $OutputFile -Append
+            }
+        }
+
+        Function Publish-Verbose([string]$text)
+        {
+            if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent)
+            {
+                Publish-TextToFile -text "VERBOSE: $text"
+            }
+            Write-Verbose "$text"
+        }
+
+        Function Publish-Warning([string]$text)
+        {
+            Publish-TextToFile -text "WARNING: $text"
+            Write-Warning "$text"
+        }
+
+        Function Publish-Text([string]$text)
+        {
+            Publish-TextToFile -text $text
+            Write-Host "$text"
+        }
+
+        Function Publish-SuccessText([string]$text)
+        {
+            Publish-TextToFile -text "Success: $text"
+            Write-Host "$text" -ForegroundColor Green
+        }
+
+        Function Publish-FailureText([string]$text)
+        {
+            Publish-TextToFile -text "Failure: $text"
+            Write-Host "$text" -ForegroundColor Red -BackgroundColor Black
+        }
 
         Function Get-WinFeatures()
         {
             # this works on Windows 7+
-            Write-Output "Checking installed Windows features..."
+            Write-Host "Checking installed Windows features..."
             $tempFile = "$env:temp\TestWindowsFeature.log"
             & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
             $Script:WinFeatures = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.State -eq "Enabled "}) | Select Name
@@ -191,7 +263,7 @@ param(
             $info | clip
             if ($intro -ne $null)
             {
-                Write-Host $intro 
+                Publish-Text -text "Suggested Command: $intro"
             }
             else
             {
@@ -205,9 +277,9 @@ param(
         {
             if (!($skipTest)) 
             {
-                if (Test-WindowsFeature -Name $name) 
+                if (Test-WindowsFeature -Name $name)
                 {
-                    Write-Output "$name is already installed"
+                    Publish-Text "$name is already installed"
                     return
                 }
             }
@@ -231,19 +303,19 @@ param(
 
             if ([int]$myOS.BuildNumber -lt 7601)
             {   
-                Write-Warning  "Your OS version is not supported" 
+                Publish-Warning -text  "Your OS version is not supported" 
                 Exit $OSVersionNotSupported
             }
 
             if ([int]$PSVersionTable.PSVersion.Major -lt 2)
             {
-                Write-Warning "PowerShell version 2 or newer is required to run this script"
+                Publish-Warning -text "PowerShell version 2 or newer is required to run this script"
                 Exit $PowerShellVersionNotSupported
             }            
 
             if(!(Get-Module -ListAvailable -Name WebAdministration))
             { 
-                Write-Warning "The required WebAdministration module is missing."
+                Publish-Warning -text "The required WebAdministration module is missing."
                 Show-PoshCommand "Test-WebSite -fix" "Please run:"
                 if ($fix)
                 {
@@ -291,7 +363,7 @@ param(
 
             Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter "system.applicationHost/sites/site[@id=$siteId]/traceFailedRequestsLogging" -name "enabled" -value "True"
 
-            Write-Output "Enabling failed request tracing for $resource requests with $statusCodes status..."
+            Write-Host "Enabling failed request tracing for $resource requests with $statusCodes status for site: `'$siteName`'"
 
             $psPath = "MACHINE/WEBROOT/APPHOST/$siteName"
             $filter = "system.webServer/tracing/traceFailedRequests"
@@ -348,7 +420,7 @@ param(
 
             Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter "system.applicationHost/sites/site[@id=$siteId]/traceFailedRequestsLogging" -name "enabled" -value "False"
 
-            Write-Output "Disabling failed request tracing for this site"
+            Write-Host "Disabling failed request tracing for site `'$siteName`'"
 
             $psPath = "MACHINE/WEBROOT/APPHOST/$siteName"
 
@@ -364,12 +436,12 @@ param(
             $caption = $caption + ":"
             $caption = $caption.PadRight(23," ")
 
-            Write-Output "$caption $value" 
+            Publish-Text -text "$caption $value" 
         }
 
         Function Print-Stuff($stuff)
         {
-            Write-Output $stuff
+            Publish-Text -text $stuff
         }
 
         Function Print-SectionHeader($text)
@@ -391,14 +463,14 @@ param(
         Function Show-MainObjects()
         {
             Print-SectionHeader "Web Sites:"
-            (Get-ChildItem IIS:\Sites| Out-String).Trim()
+            Publish-Text -text (Get-ChildItem IIS:\Sites| Out-String).Trim()
             Print-SectionHeader "Application Pools:"
-            (Get-ChildItem IIS:\AppPools | FT | Out-String).Trim()
+            Publish-Text -text (Get-ChildItem IIS:\AppPools | FT | Out-String).Trim()
             Print-SectionHeader "SSL Bindings:"
-            (Get-ChildItem IIS:\SslBindings | Out-String).Trim()
+            Publish-Text -text (Get-ChildItem IIS:\SslBindings | Out-String).Trim()
             Print-SectionHeader "TLS Server Certificates: $((Get-ChildItem Cert:\LocalMachine\my | Where-Object {$_.EnhancedKeyUsageList -match "Server Authentication"}).Count)"
             
-            netsh http show iplisten
+            Publish-Text -text (netsh http show iplisten | Out-string).Trim()
         }
 
         Function Show-OSInfo()
@@ -440,12 +512,12 @@ param(
             # the following works in Win7/2008R2 and newer           
             $tempFile = "$env:temp\TestWindowsFeature.log"
             & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
-            (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()
+            Publish-Text -text (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()
             Remove-Item -Path $tempFile -Force
 
             Print-SubHeader "Global Modules"
             
-            ((Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()     
+            Publish-Text -text ((Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()     
         }
 
         Function Show-SiteInfo($site,$pool)
@@ -459,27 +531,27 @@ param(
             
             Print-SubHeader "Bindings"
 
-            (($site | Select -expandproperty bindings).collection | format-table -AutoSize | Out-String).Trim()
+            Publish-Text -text (($site | Select -expandproperty bindings).collection | format-table -AutoSize | Out-String).Trim()
             
             $limits = ($site | Select -expandproperty limits).collection
             if ($limits.count -gt 0)
             {
                 Print-SubHeader "Limits"
-                ($limits |format-table -AutoSize | Out-String).Trim()
+                Publish-Text -text ($limits |format-table -AutoSize | Out-String).Trim()
             }
 
             Print-SubHeader "Default Documents"
-            (Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | Format-Table -HideTableHeaders  | Out-String).Trim()
+            Publish-Text -text (Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | Format-Table -HideTableHeaders  | Out-String).Trim()
 
             Print-SubHeader "Error Pages"
-            (Get-WebConfiguration "system.webserver/httpErrors" "IIS:\sites\$($site.name)" | Format-Table -Property ErrorMode,existingResponse,defaultResponseMode  -AutoSize | Out-String).Trim()
+            Publish-Text -text (Get-WebConfiguration "system.webserver/httpErrors" "IIS:\sites\$($site.name)" | Format-Table -Property ErrorMode,existingResponse,defaultResponseMode  -AutoSize | Out-String).Trim()
 
             Print-SubHeader "Authentication"
             Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\$($site.Name)" | Sort-Object SectionPath | foreach{
-                 Write-Output ""
-                 $($_.SectionPath -replace "/system.webServer/security/authentication/","")
-                 Write-Output ""
-                 ($_ | select -expandproperty attributes | Where {$_.Name -ne "password"} | Select Name,Value | Format-Table -AutoSize | out-string).Trim()
+                 Publish-Text -text ""
+                 Publish-Text -text $($_.SectionPath -replace "/system.webServer/security/authentication/","")
+                 Publish-Text -text ""
+                 Publish-Text -text ($_ | select -expandproperty attributes | Where {$_.Name -ne "password"} | Select Name,Value | Format-Table -AutoSize | out-string).Trim()
             }
 
             Show-PoolInfo $pool
@@ -488,14 +560,14 @@ param(
 
             Print-SubHeader "Folder permissions for $webRoot"
 
-            ((Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited | Format-Table -AutoSize | out-string).Trim()
+            Publish-Text -text ((Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited | Format-Table -AutoSize | out-string).Trim()
 
             $virDirs = Get-WebVirtualDirectory -site "$($site.name)"
 
             if ($virDirs.count -gt 0)
             {
                 Print-SectionHeader "Virtual Directories"
-                ($virDirs | Format-Table -Property Path,PhysicalPath,AllowSubDirConfig,UserName  -AutoSize | Out-String).Trim()
+                Publish-Text -text ($virDirs | Format-Table -Property Path,PhysicalPath,AllowSubDirConfig,UserName  -AutoSize | Out-String).Trim()
             }
 
             $apps = Get-WebApplication -site "$($site.name)"
@@ -503,7 +575,7 @@ param(
             if ($apps.count -gt 0)
             {
                 Print-SectionHeader "Applications"
-                ($apps | Select Path,PhysicalPath,applicationPool | Format-Table -AutoSize | Out-String).Trim()
+                Publish-Text -text ($apps | Select Path,PhysicalPath,applicationPool | Format-Table -AutoSize | Out-String).Trim()
             }
          }
 
@@ -534,9 +606,9 @@ param(
             $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq "$name"}
             if ($site -eq $null)
             {
-                Write-Warning "The WebSite `'$name`' could not found"
+                Publish-Warning -text "The WebSite `'$name`' could not found"
 
-                Write-Host "Existing sites on this server:"
+                Publish-Text "Existing sites on this server:"
                 Get-ChildItem iis:\sites | Select Name | Format-Table -HideTableHeaders -AutoSize
 
                 Exit $WebSiteNotFound
@@ -547,8 +619,8 @@ param(
 
             if ($pool -eq $null)
             {
-                Write-Warning "Application Pool $poolName not found"
-                Write-Output "Make sure your website has a existing application pool assigned"
+                Publish-Warning -text "Application Pool $poolName not found"
+                Publish-Text -text "Make sure your website has a existing application pool assigned"
                 Exit $AppPoolNotFound
             }
 
@@ -562,7 +634,7 @@ param(
 
         Function Show-TestSuccess([string]$info)
         {
-            Write-Verbose "Test: $info "
+            Publish-Verbose -Text "Test: $info "
         }          
 
         Function Confirm-Command([string]$message)
@@ -623,21 +695,31 @@ param(
         {
             $url = ""
 
+            # we allow to specify the full uri, even if it doesn't match the binding.
             if ($resource.StartsWith("http"))
             {
                 return $resource
             }
 
             # this will return http:// before any https://
-            # we may want to add more logic which binding to use later
-            foreach($binding in ($site.Bindings.collection | Sort protocol | Select -First 1))
+            # and then picks the first one in order
+            foreach($binding in ($site.Bindings.collection | Sort-Object protocol, bindingInformation))
             {
+                Publish-Verbose -Text "checking binding: $($binding.ToString())"
+
                 # ignore non-http protocols
                 if ($binding.protocol -match "^http")
                 {
                     $url = Convert-Binding -binding $binding
-                    $url += $resource           
+                    $url += $resource
+                    break        
                 }
+            }
+
+            if ($url -eq "")
+            {
+                Publish-Warning -text "No valid binding found, only http* is supported"
+                Exit $NoBindingFound
             }
 
             return $url
@@ -657,21 +739,21 @@ param(
 
             if ($logfile.logFormat -ne "W3C")
             {
-                Write-Warning "Please use W3C log format"
+                Publish-Warning -text "Please use W3C log format"
                 Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logFormat' -value 'W3C'"
                 $logOkay = $false           
             } 
 
             if ($logfile.period -ne "Daily")
             {
-                Write-Warning "Please use Daily logs"            
+                Publish-Warning -text "Please use Daily logs"            
                 Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'period' -value 'Daily'"
                 $logOkay = $false            
             }
 
             if ($logfile.logExtFileFlags -notMatch "HttpSubStatus")
             {
-                Write-Warning "Please include the sc-substatus field in your logs"         
+                Publish-Warning -text "Please include the sc-substatus field in your logs"         
             
                 $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
                 $logFields += ",HttpSubStatus"
@@ -684,7 +766,7 @@ param(
 
             if ($logfile.logExtFileFlags -notMatch "UserAgent")
             {
-                Write-Warning "Please include the UserAgent field in your logs"         
+                Publish-Warning -text "Please include the UserAgent field in your logs"         
             
                 $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
                 $logFields += ",UserAgent"
@@ -697,7 +779,7 @@ param(
             
             if ($logfile.logExtFileFlags -notMatch "Win32Status")
             {
-                Write-Warning "Please include the sc-Win32-Status field in your logs"         
+                Publish-Warning -text "Please include the sc-Win32-Status field in your logs"         
             
                 $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
                 $logFields += ",Win32Status"
@@ -725,9 +807,8 @@ param(
 
         # Main Process functions
 
-        Function Test-WebConfig([string]$webRoot)
+        Function New-EmptyWebConfig([string]$webConfig)
         {
-            $webConfig = Join-Path $webRoot "web.config"
 
         $webConfigTemplate = @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -737,35 +818,50 @@ param(
 </configuration>        
 "@
 
+            $webConfigTemplate | Set-Content $webConfig -Verbose
+
+        }
+
+        Function Test-WebConfig([string]$webRoot)
+        {
+            $webConfig = Join-Path $webRoot "web.config"
+
             if (!(Test-path $webConfig))
             {
-                Write-Warning "Web.Config file does not exists in the web root"
-                Write-Output "Please make sure $webConfig exists."
+                Publish-Warning -text "Web.Config file does not exists in the web root"
+                Publish-Text -text "Please make sure $webConfig exists."
                 $result = Confirm-Command -message "Create an empty web.config file now?"
 
                 switch ($result)
                 {
-                    0 {$webConfigTemplate | Set-Content $webConfig -Verbose}
+                    0 {New-EmptyWebConfig -webConfig $webConfig}
                     1 {}
                 }
 
-                Exit $WebConfigMissing
+                # if the user wants to be script, this is an exit condition
+                if ($BeStrict)
+                {
+                    Publish-Text -text "Exit script, don't use -BeStrict to continue"
+                    Exit $WebConfigMissing
+                }
             }
-
-            Show-TestSuccess -info "Configuration `"$webConfig`" exists"            
+            else
+            {
+                Show-TestSuccess -info "Configuration `"$webConfig`" exists"   
+            }                     
         }
 
         Function Process-Page($site)
         {
             $html = $script:FailedRequest.Html
 
-            Write-Verbose "Analyzing error page html"
+            Publish-Verbose -Text "Analyzing error page html"
 
             if ($html.Length -lt 1000)
             {
                 if ($script:FailedRequest.Server -eq "Microsoft-HTTPAPI/2.0")
                 {
-                    Write-Warning "IIS was unable to find a running application pool"
+                    Publish-Warning -text "IIS was unable to find a running application pool"
                                    
                     # https://support2.microsoft.com/default.aspx?scid=kb;en-us;820729
 
@@ -777,10 +873,10 @@ param(
 
                     if ($logFileName -ne $null)
                     {
-                        Write-Verbose "Checking http.sys log: $logFileName"
+                        Publish-Verbose -Text "Checking http.sys log: $logFileName"
                         $Log = Get-LogContent -fileName $logFileName -tail 5 -exclude "#*"  # Get-Content $logFileName -Tail 5 | Where-Object {$_ -notLike "#*" }
-                        Write-Verbose "Here are the last lines, time is in UTC" 
-                        Write-Verbose "Please note that this log is not up to date, but the problem may be listed anyways"
+                        Publish-Verbose -Text "Here are the last lines, time is in UTC" 
+                        Publish-Verbose -Text "Please note that this log is not up to date, but the problem may be listed anyways"
                         if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent)
                         {         
                             $Log
@@ -791,7 +887,7 @@ param(
                 }   
                 else
                 {
-                    Write-Warning "Short response, but not from Microsoft-HTTPAPI/2.0, what can it be?"
+                    Publish-Warning -text "Short response, but not from Microsoft-HTTPAPI/2.0, what can it be?"
                 }             
             }
             else
@@ -803,7 +899,7 @@ param(
           
                 if ( ($xml.html.body.div.div.h3).count -eq 0)
                 {
-                    Write-Warning "Detailed local error messages seem not to be enabled"
+                    Publish-Warning -text "Detailed local error messages seem not to be enabled"
                     Show-PoshCommand -info "Set-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`'  -filter `"system.webServer/httpErrors`" -name `"errorMode`" -value `"DetailedLocalOnly`""
                     return
                 }
@@ -826,7 +922,7 @@ param(
             $logOkay = Check-LogFile -site $site
             if ($logOkay -eq $false)
             {
-                 Write-Warning "Log file settings not as required, log file will not be used"
+                 Publish-Warning -text "Log file settings not as required, log file will not be used"
                  return
             }
 
@@ -840,13 +936,13 @@ param(
 
             if (!(Test-Path $logFileName))
             {
-                Write-Warning "Log file not found: $logFileName" 
-                Write-Output "This may happen if none of the bindings for the site work" 
-                Write-Output "Try again using the verbose switch: Test-WebSite.ps1 -verbose "
+                Publish-Warning -text "Log file not found: $logFileName" 
+                Publish-Text -text" This may happen if none of the bindings for the site work" 
+                Publish-Text -text "Try again using the verbose switch: Test-WebSite.ps1 -verbose "
                 Return
             }
            
-            Write-Verbose "Checking $logFileName"
+            Publish-Verbose -Text "Checking $logFileName"
             
             # we assume the entry we are looking for is the last one, so using -tail 50
             # gives us for few more, just in case.
@@ -858,7 +954,7 @@ param(
 
             $id = Get-UniqueUserAgent -ticks $script:FailedRequest.Ticks   
                 
-            Write-Verbose "looking for row with: $id"
+            Publish-Verbose -Text "looking for row with: $id"
                        
             $lineFound = $false
 
@@ -881,7 +977,7 @@ param(
                     $script:FailedRequest.Win32 = $cols[$win32StatusColumn-1]
                     $script:FailedRequest.Processed = $true
 
-                    Write-Verbose "Found: $row"
+                    Publish-Verbose -Text "Found: $row"
                     $lineFound = $true
                     break
                 }
@@ -889,20 +985,45 @@ param(
 
             if(!($lineFound))
             {
-                Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
+                WPublish-Text -text "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
             }                         
         }
        
-        Function Test-WebPage([string]$url)        
+        Function Test-WebPage([string]$url)
         {
-            Write-verbose "Testing: $url"
+
+            if ($url -eq $null -or $url -eq "")
+            {
+                Publish-Warning -text "Unable to find a URL to use for testing"
+                Exit $NoUrlProvided
+            }
+
+            Publish-Verbose -Text "Testing: $url"
             [int64]$ticks = [System.DateTime]::Now.Ticks
             $userAgent = Get-UniqueUserAgent -ticks $ticks
 
             try {
                 $r = [System.Net.WebRequest]::Create($url)
                 $r.UserAgent=$userAgent
-                $resp = $r.GetResponse()            
+                $resp = $r.GetResponse()        
+     
+                if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent)
+                {        
+                    Publish-Verbose -Text "Response Headers:" 
+                    foreach ($HeaderKey in $resp.Headers) {
+                          $caption = $HeaderKey.PadLeft(15," ")
+                          Publish-Text "$caption`: $($resp.Headers[$HeaderKey])";
+                    }
+                }
+                    
+                if ($PSCmdlet.MyInvocation.BoundParameters["Debug"].IsPresent)
+                {        
+                    $reqstream = $resp.GetResponseStream()
+                    $sr = New-Object System.IO.StreamReader $reqstream
+                    $result = $sr.ReadToEnd()
+                    Write-Debug "$result"
+                }
+
                 return $resp.StatusCode 
             }           
             catch [System.Net.WebException] 
@@ -919,6 +1040,18 @@ param(
                     $reqstream = $resp.GetResponseStream()
                     $sr = New-Object System.IO.StreamReader $reqstream
                     $result = $sr.ReadToEnd()
+
+                    if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent)
+                    {        
+                        Publish-Verbose -Text "Response Headers:" 
+                        Publish-Text "         Status: $([int]$resp.StatusCode) - $($resp.StatusCode)"
+                        foreach ($HeaderKey in $resp.Headers) {
+                              $caption = $HeaderKey.PadLeft(15," ")
+                              Publish-Text "$caption`: $($resp.Headers[$HeaderKey])";
+                        }
+
+                        Write-Debug "$result"
+                    }
 
                     # store the result in a global object
                     $script:FailedRequest = New-Object psobject -Property @{
@@ -938,7 +1071,7 @@ param(
                 }                    
                      
             } catch {            
-                Write-Verbose $_.Exception
+                Publish-Verbose -Text $_.Exception
                 return 55500
             }
         }
@@ -953,15 +1086,15 @@ param(
             )       
 
             $fullStatus = "$($script:FailedRequest.Status).$($script:FailedRequest.SubStatus)"
-            Write-Warning "$($script:FailedRequest.Url) - $fullStatus - Win32: $($script:FailedRequest.Win32)"
+            Publish-FailureText -text "$($script:FailedRequest.Url) - $fullStatus - Win32: $($script:FailedRequest.Win32)"
 
             if ($statusInfo.ContainsKey($fullStatus))
             {
-                Write-Warning $statusInfo[$fullStatus]
+                Publish-Warning -text $statusInfo[$fullStatus]
             }
             else
             {
-           #     Write-Warning "This problem is currently not handled"
+           #     Publish-Warning -text "This problem is currently not handled"
             }
 
             # use content from files in C:\inetpub\custerr\en-US
@@ -972,6 +1105,8 @@ param(
             $res = $res -replace "/","\"
             $potentialResource = Join-Path $webRoot $res
 
+            Publish-Verbose -Text "Physical Resource: $potentialResource"
+
             $AppProcessmodel = ($pool | Select -ExpandProperty processmodel)
             $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
@@ -981,7 +1116,7 @@ param(
             }
             catch
             {
-                Write-Warning "A problem occurred reading the configuration"
+                Publish-Warning -text "A problem occurred reading the configuration"
             }
             
             If (($res.EndsWith("\")) -or ($res -eq ""))
@@ -1004,7 +1139,7 @@ param(
                 }
             }
 
-            Write-Output ""
+            Publish-Text -Text ""
 
             # display content from the IIS error pages
             # there may be more than one language we just pick the random first one
@@ -1015,27 +1150,27 @@ param(
 
             if (Test-Path $errorPageFile)
             {
-                Write-Output "----------------------------------------------------------------------"
-                Write-Output "Additional Information:"
+                Publish-Text -text "----------------------------------------------------------------------"
+                Publish-Text -text "Additional Information:"
                 [xml]$errorPage = Get-Content $errorPageFile
-                Write-Output $errorPage.html.body.div.div.fieldset.h2
-                Write-Output $errorPage.html.body.div.div.fieldset.h3
-                Write-Output "----------------------------------------------------------------------"
+                Publish-Text -text $errorPage.html.body.div.div.fieldset.h2
+                Publish-Text -text $errorPage.html.body.div.div.fieldset.h3
+                Publish-Text -text "----------------------------------------------------------------------"
             }
 
-            Write-Output "Suggested solution:"
+            Publish-Text "Suggested solution:"
 
             if ($fullStatus -eq "404.0")
             {
-                Write-Output "The file `'$potentialResource`' does not exists on disk, please double check the location."
+                Publish-Text -text "The file `'$potentialResource`' does not exists on disk, please double check the location."
             }
             elseif ($fullStatus -eq "403.14")
             {
-                Write-Output "Make sure one of the defined default documents is present in the folder: `'$webRoot`'"
+                Publish-Text -text "Make sure one of the defined default documents is present in the folder: `'$webRoot`'"
                 $defaultDocs | ForEach {
-                    Write-Output " - $($_.value) "
+                    Publish-Text -text " - $($_.value) "
                 }
-                Write-Output "We do not recommend to enable directory browsing"
+                Publish-Text -text "We do not recommend to enable directory browsing"
             }            
             elseif ($fullStatus -eq "404.3")
             {
@@ -1043,7 +1178,7 @@ param(
                 {
                     $extension = [System.IO.Path]::GetExtension($potentialResource)
 
-                    Write-Output "The file $potentialResource exists, but IIS is not configured to serve files with the extension `'$extension`'"
+                    Publish-Text -text "The file $potentialResource exists, but IIS is not configured to serve files with the extension `'$extension`'"
                     Show-PoshCommand "Add-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`' -filter 'system.webServer/staticContent' -name '.' -value @{fileExtension=`'$extension`';mimeType='text/html'}" `
                     -intro "Add a new MIME type, but make sure your are using the correct type for this file"
                 }
@@ -1052,19 +1187,19 @@ param(
             {             
                 if ($win32Status -eq 5)
                 {
-                    Write-Output "Set permissions on web.config"
+                    Publish-Text -text "Set permissions on web.config"
                 } 
                 elseif ($win32Status -eq 50)
                 {
-                    Write-Output "Configuration "
+                    Publish-Text -text "Problem with the Configuration"
                 }  
             }
             elseif ($fullStatus -eq "503.0")
             {             
-                Write-Output "Service Unavailable"
+                Publish-Text -text "Service Unavailable"
                 
-                Write-Output "There are many potential reasons for this problem"
-                Write-Output "If you are running a custom application, please check the Windows event logs"
+                Publish-Text -text "There are many potential reasons for this problem"
+                Publish-Text -text "If you are running a custom application, please check the Windows event logs"
 
                 $pastSeconds = 10
                 $time = (Get-Date) – (New-TimeSpan -Minute $pastSeconds)
@@ -1074,12 +1209,12 @@ param(
 
                 if ($errorEvents.Count -gt 0)
                 {
-                  Write-Warning "$($errorEvents.Count) errors found in the application event log in the last $($pastSeconds ) seconds"
-                  $errorEvents | Select TimeCreated, ProviderName, Message | fl
+                  Publish-Warning -text "$($errorEvents.Count) errors found in the application event log in the last $($pastSeconds ) seconds"
+                  Publish-Text -text ($errorEvents | Select TimeCreated, ProviderName, Message | fl)
                 }
                 else
                 {
-                   Write-Output "No errors found in the application event log in the last $($pastSeconds ) seconds"
+                   Publish-Text -text "No errors found in the application event log in the last $($pastSeconds ) seconds"
                 }
 
                 #Write-Output $script:FailedRequest.Html
@@ -1089,17 +1224,17 @@ param(
 
                 if ($ReasonPhrase.ContainsKey($lastKnowProblem))
                 {
-                    Write-Output "Last known problem:"
-                    Write-Output $ReasonPhrase[$lastKnowProblem]
+                    Publish-Text -text "Last known problem:"
+                    Publish-Text -text $ReasonPhrase[$lastKnowProblem]
                 }
                               
                 if ($AppProcessmodel.identityType -eq "SpecificUser")
                 {
-                    Write-Output "`r`nThe Application pool `'$($pool.Name)`' is running under account: `'$($AppProcessmodel.userName)`' "
-                    Write-Output "Is this account active, the password correct and not expired?"
-                    Write-Output "Output of `'net user $($AppProcessmodel.userName)`':`n"
+                    Publish-Text -text "`r`nThe Application pool `'$($pool.Name)`' is running under account: `'$($AppProcessmodel.userName)`' "
+                    Publish-Text -text "Is this account active, the password correct and not expired?"
+                    Publish-Text -text "Output of `'net user $($AppProcessmodel.userName)`':`n"
                     & net user $AppProcessmodel.userName
-                    Write-Output "You may want to reset the password in the Advanced Settings for the application pool, in the `'Process Model Identity`' dialog."
+                    Publish-Text -text "You may want to reset the password in the Advanced Settings for the application pool, in the `'Process Model Identity`' dialog."
                 }
                 # Write-Output ($AppProcessmodel | fl * |Out-String)
             }
@@ -1107,21 +1242,21 @@ param(
             {
                 If (Test-Path $potentialResource)
                 {
-                    Write-Output "Here are the permissions for file: $potentialResource"
+                    Publish-Text -text "Here are the permissions for file: $potentialResource"
                     (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
                     # show the user running the pool
                     # suggest acl change to fix this problem
                     
                     if ($AppProcessmodel.identityType -eq "ApplicationPoolIdentity")
                     {
-                        Write-Output "`r`nThe Application pool is running under: `"IIS APPPOOL\$($pool.name)`""
+                        Publish-Text -text "`r`nThe Application pool is running under: `"IIS APPPOOL\$($pool.name)`""
                     }
                     else
                     {
-                        Write-Output "The Application pool is running under: $($AppProcessmodel.identityType)"
+                        Publish-Text -text "The Application pool is running under: $($AppProcessmodel.identityType)"
                     }   
                     
-                    Write-Output ""       
+                    Publish-Text -text ""       
                     
                     if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
                     {
@@ -1138,14 +1273,8 @@ param(
             }
             else
             {
-                Write-Output "It seems in this version we have no information about how to fix your problem, sorry."
-                Write-Verbose "It seems in this version we have no information about how to fix your problem, sorry."
-            }
-
-            if ($EnableFreb)
-            {
-                Enable-Tracing -siteId $site.id -siteName $site.Name -statuscodes $status -resource "*"
-                Write-Output "Please run the same test again"
+                Publish-Text -text "It seems in this version we have no information about how to fix your problem, sorry."
+                Publish-Verbose -Text "It seems in this version we have no information about how to fix your problem, sorry."
             }
 
             $filter = "system.applicationHost/sites/site[@name='" + $site.Name + "']/traceFailedRequestsLogging"
@@ -1160,9 +1289,9 @@ param(
 
                 if ($frebFiles.count -gt 0)
                 {
-                    Write-Host "Failed Request Tracing files are available:"
+                    Publish-Text -text "Failed Request Tracing files are available:"
                     $frebFiles | ForEach {
-                        Write-Output $(Copy-FrebFiles $_.FullName)
+                        Publish-Text -text $(Copy-FrebFiles $_.FullName)
                     }
                 }
             }
@@ -1174,8 +1303,25 @@ param(
 
     Process
     {
+        if ($OutputFile -ne "")
+        {
+            $outFolder = [System.IO.Path]::GetDirectoryName($OutputFile)
+            if (!(Test-Path $outFolder))
+            {
+                Write-Warning "$outFolder doesn't exist, ouput file will not be created"
+                $OutputFile = ""
+            }
+            else
+            {
+                # create an empty output file
+                "" | Out-File $OutputFile
+                Write-Host "Output is written to $OutputFile"
+            }
+        }
+        
         Check-RequiredPrerequisites
         if ($install) {Install-OptionalTools}
+
         Import-Module WebAdministration -Verbose:$false 
 
         if ($ShowServer)
@@ -1194,7 +1340,7 @@ param(
 
         if ($site -eq $null)
         {
-            Write-Warning "WebSite $name not found"
+            Publish-Warning -text "WebSite $name not found"
             Exit $WebSiteNotFound # Not Found
         }
         else
@@ -1202,18 +1348,25 @@ param(
             Show-TestSuccess -info "WebSite: `"$name`" exists"
         }
 
-        # Test WebSite is running
-        if ($site.State -ne "Started")
-        {
-            Write-Warning "WebSite $name is not running"
-            Write-Output "Please make sure the web site is running:"
-            Show-PoshCommand "Start-WebSite `"$name`""
-            Exit $WebSiteNotRunning
-        }
-
         if ($DisableFreb)
         {
             Disable-Tracing -siteId $site.id -siteName $site.Name
+            Exit $ExitSuccess
+        }
+
+        if ($EnableFreb)
+        {
+            Enable-Tracing -siteId $site.id -siteName $site.Name -statuscodes "400-999" -resource "*"
+            Exit $ExitSuccess
+        }
+
+        # Test WebSite is running
+        if ($site.State -ne "Started")
+        {
+            Publish-Warning -text "WebSite $name is not running"
+            Publish-Text -text "Please make sure the web site is running:"
+            Show-PoshCommand "Start-WebSite `"$name`""
+            Exit $WebSiteNotRunning
         }
 
         Show-TestSuccess -info "WebSite: `"$name`" is running"
@@ -1226,15 +1379,15 @@ param(
         # if the pool wouldn't exist or running, the site wouldn't run either.
         if ($pool -eq $null)
         {
-            Write-Warning "Application Pool $poolName not found"
-            Write-Output "Make sure your website has a existing application pool assigned"
+            Publish-Warning -text "Application Pool $poolName not found"
+            Publish-Text -text "Make sure your website has a existing application pool assigned"
             Exit $AppPoolNotFound
         }
     
         if ($pool.State -ne "Started")
         {
-            Write-Warning "Application pool $poolName is not running"
-            Write-Output "Please make sure the Application pool is running:"
+            Publish-Warning -text "Application pool $poolName is not running"
+            Publish-Text -text "Please make sure the Application pool is running:"
             Show-PoshCommand "Start-WebAppPool `"$poolName`""
             Exit $AppPoolNotRunning
         }
@@ -1251,7 +1404,7 @@ param(
         if ($status -eq 200)
         {
             Show-TestSuccess -info "The test request returned with status 200"
-            Write-Host "All tests passed" -ForegroundColor Green
+            Publish-SuccessText -text "All tests passed"
             Exit $WebSuccess
         }
         else
@@ -1269,7 +1422,7 @@ param(
             }
             else
             {
-                Write-Host "Request could not be processed: http status: $status" -ForegroundColor Yellow
+                Publish-FailureText "Request could not be processed, http status: $status"
             }
         }
     }
