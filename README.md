@@ -1,20 +1,22 @@
 # Test-WebSite
-A collection of PowerShell scripts to test an IIS website for the most common setup problems.
+A PowerShell script to test an IIS website for the most common setup problems.
 
 ### Description
 
 You should run this when you are having a problem with your site setup on IIS.
-After checking a few things the script calls a page on your site, if not a http status of 200, it checks the IIS logs for that request to get the substatus code.
-It then tries to suggest various things to fix the problem.
+After checking a few things the script downloads a resource from your local site, if it doesn't return an http status of 200, it tries to find out more about the problem.
+It also tries to suggest various things to fix the problem.
 
 I often answer questions about IIS on [serverfault.com](http://serverfault.com), [stackoverflow.com](http://stackoverflow.com/) or [forums.iis.com](http://forums.iis.net/) and often people provide very little information about their problem.
 Nearly always it would be helpful to know the sub-status code and people should try a few common troubleshooting things before asking a questions on these forums.
 
 So if anybody could run this script before asking a question and providing the information it outputs, that would be very helpful for people answering questions.
 
-I also realized there are a lot of things this script could test and many ways in which it could break. So there is still a lot of work to do.
+I realized there are a lot of things this script could test and many ways in which it could break. So there is still a lot of work to do. So consider this a Beta.
 
-There are currently three scripts: **Test-WebSite.ps1** is the main one and performs various tests against a web site. **Show-WebSite.ps1** and **Show-WebServer.ps1** simply display information which may be helpful for troubleshooting.
+The script can either just display information about the server (-ShowServer) or a web site (-ShowSite) but its primary function is to run some tests against a single web site.
+
+The displayed information should be helpful for troubleshooting.
 
 ### Requirements
 
@@ -24,17 +26,15 @@ There are currently three scripts: **Test-WebSite.ps1** is the main one and perf
 - PowerShell WebAdministration module installed.
 
 This means the scripts run on Windows 7 SP1 without any additional downloads.
+It may work on Server 2008, but you have to install PowerShell 2 and the IIS PowerShell module.
 
 ### Installation and Usage
 
-- [How to get, run and troubleshoot the scripts](Usage.md)
-
-### Helpful but not required
-- IIS logging with certain settings installed (use -install switch)
-- IIS Failed request tracing installed (use -install switch)
+- [How to get, run and troubleshoot the script](Usage.md)
 
 ### Version History
 
+- 0.6 - Back to a single file Test-WebSite.ps1
 - 0.5 - Added Show-WebServer.ps1
 - 0.4 - More features implemented
 - 0.3 - Added Show-WebSite.ps1
@@ -49,9 +49,13 @@ This means the scripts run on Windows 7 SP1 without any additional downloads.
 
 ### Future improvements
 
-- Handle all kind of 400 and 500 responses
+- Handle all kinds of 400 and 500 responses by providing more information.
 - Actually executing the suggested fixes
 - Configuring Failed Request tracing and analyzing the logs.
+
+### Optional IIS components
+- IIS logging with certain settings installed (use -install switch). This may be used to find the sub-status code of a response.
+- IIS Failed request tracing installed (use -install switch). 
 
 ### Example output:
 

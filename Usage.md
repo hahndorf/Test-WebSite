@@ -1,51 +1,49 @@
-# Using the scripts
+# Using Test-WebSite.ps1
 
-##Getting the scripts
+##Getting the script
 
-There are several ways to get the script file to your computer, download the zip, clone the repository, save the content manually into a file. If you just need one script you can run one of the following commands in PowerShell:
+There are several ways to get the script file to your computer, download the zip, clone the repository, save the content manually into a file. 
+You can also get it with PowerShell:
 
-Open an elevated PowerShell, first cd into a directory of your choice to store the scripts in, e.g.:
+Open an elevated PowerShell window, first cd into a directory of your choice to store the script in, e.g.:
 
 	cd ~\Downloads
 
-**To download Test-WebSite.ps1:**
+then download the script:
 
 	(New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/hahndorf/Test-WebSite/master/Test-WebSite.ps1') | out-file .\Test-WebSite.ps1 -force 
 
-**To download Show-WebSite.ps1:**
-
-	(New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/hahndorf/Test-WebSite/master/Show-WebSite.ps1') | out-file .\Show-WebSite.ps1 -force
-
-**To download Show-WebServer.ps1:**
-
-	(New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/hahndorf/Test-WebSite/master/Show-WebServer.ps1') | out-file .\Show-WebServer.ps1 -force
-
 After downloading a PowerShell script from the Internet, you should always review it to make sure it doesn't do anything bad, especially because we have to run it as an elevated administrator. 
 
-##Running the scripts
+##Running the script
 
-or where ever you saved the script files. Then run the script itself:
+Assuming you are still in the location you downloaded the script to, find out more about the parameters you can use for the script:
 
-    .\ScriptName.ps1
+    help .\Test-WebSite.ps1 -full
 
-Each script may be started with certain parameters, to find out more about each script run:
+The most common use cases are:
 
-    help .\ScriptName.ps1 -full
+### Show server information
+
+    .\Test-WebSite.ps1 -ShowServer
+
+### Show site information
+	.\Test-WebSite.ps1 -ShowSite -Name siteName
+
+### Test a web site
+	.\Test-WebSite.ps1 -Name siteName
 
 To save the output into a file use:
 
-    .\ScriptName.ps1 | Out-File "$env:userprofile\documents\info.txt"
+    .\Test-WebSite.ps1 -Name siteName | Out-File "~\documents\info.txt"
 
 To include the content of the output file in your support question, first run
 
-    notepad "$env:userprofile\documents\info.txt"
+    notepad "~\documents\info.txt"
 
-then review the text and remove anything who don't want to share with the support community. Use the rest as part of your support request.
-
-Of course you need to replace ScriptName.ps1 with the real name of the script you want to use such as Test-Website.ps1, Show-Website.ps1 or Show-WebServer.ps1
+then review the text and remove anything you don't want to share with the support community. Use the rest as part of your support request.
 
 More information can be found in the [main read.me](https://github.com/hahndorf/Test-WebSite)
-
 
 ##Problems running the script
 
