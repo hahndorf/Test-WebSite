@@ -35,11 +35,11 @@ The most common use cases are:
 
 To save the output into a file use:
 
-    .\Test-WebSite.ps1 -Name siteName | Out-File "~\documents\info.txt"
+    .\Test-WebSite.ps1 -Name siteName -OutputFile "~\documents\sitereport.txt"
 
 To include the content of the output file in your support question, first run
 
-    notepad "~\documents\info.txt"
+    notepad "~\documents\sitereport.txt"
 
 then review the text and remove anything you don't want to share with the support community. Use the rest as part of your support request.
 
@@ -51,7 +51,7 @@ You may get one of the following messages when trying to run a script:
 
 ### Execution Policy
 
-    ...Show-WebSite.ps1 cannot be loaded because running scripts is disabled on this system...
+    ...Test-WebSite.ps1 cannot be loaded because running scripts is disabled on this system...
 
 PowerShell doesn't allow the execution of unsigned scripts, to
 allow the execution of local unsigned scripts for this session run:
