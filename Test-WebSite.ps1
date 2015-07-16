@@ -2,21 +2,27 @@
 .SYNOPSIS
     Script to test an IIS website for the most common setup problems.
 .DESCRIPTION
-    The script tries to tests a single IIS web site and will make suggestions on how
+    The script tries to test a single IIS web site and will make suggestions on how
     to fix potential problems.
 .PARAMETER Name
     The name of the web site to test, as seen in IIS Manager or 'Get-WebSite'
+    If not provided 'Default Web Site' will be used.
 .PARAMETER Resource
     the url part of the resource to test starting with the with slash after the hostname/port
     on the full url. Always start with a forward slash. If empty, the home page of the site will
     be tested.
-.PARAMETER mvc
+.PARAMETER Mvc
     To indicate that the resource to be checked is expected to be handled by ASP.NET MVC
     Not supported yet
-.PARAMETER install
+.PARAMETER Install
     Installs missing optional IIS components.
-.PARAMETER fix
+    Http logging and Failed Request Tracing
+.PARAMETER Fix
     Try to fix problems found.
+.PARAMETER Show
+    Shows information about the web site, does not run any tests
+.PARAMETER ShowServer
+    Shows information about the IIS server, does not run any tests. Use -verbose for more information
 .PARAMETER DontOfferFixes
     If specified, the user will never be asked to run fixes. Useful for automated testing
 .PARAMETER EnableFreb
@@ -25,37 +31,67 @@
 .PARAMETER DisableFreb
     Disables Failed Request tracing for the site and removes all tracings rules.
 .EXAMPLE       
-    Test-WebSite -Name MySite
-    Uses the default tests against the web site named 'MySite'
+    Test-WebSite
+    Runs the tests against the web site named 'Default Web Site'
 .EXAMPLE       
-    Test-WebSite -Resource "/login.asp?user=foo" -SkipPrerequisitesChecks
-    Uses the default tests against the specified resource on the web site named 'Default Web Site'. Skips checks.
+    Test-WebSite -Name MySite -Resource "/login.asp?user=foo"
+    Runs the tests against the specified resource on the web site named 'MySite'.
+.EXAMPLE
+    Test-WebSite -Name MySite -Resource "/foo.html" -verbose
+    Runs the tests against the specified resource on the web site named 'MySite'.
+    Includes additional information about the tests performed
+.EXAMPLE       
+    Test-WebSite -ShowSite -name MySite
+    Shows information for the web site named 'MySite'
+.EXAMPLE       
+    Test-WebSite -ShowServer
+    Shows information about the web server including all sites and AppPools
+.EXAMPLE       
+    Test-WebSite -showServer -verbose
+    Shows information about the web server including all sites and AppPools
+    Includes information about the installed IIS modules
+
 .NOTES
 
-    The exit values are integer number between 10000 and 10000
-    They are calculated by multiplying the http status times 100 and add the substatus
-    So an normal okay is 20000
+    The exit value is an integer number between 0 and 70000
+    It is calculated by multiplying the http status times 100 and add the substatus
+    So an normal 200-Okay is 20000
     a 404.8 is 40408
     a 500.19 is 50019
 
     Should work with PowerShell 2 on Windows 7 SP1 and anything newer
 
-    Author: Peter Hahndorf
-    Date:   July 1, 2015    
+    Author:  Peter Hahndorf
+    Created: July 1, 2015 
+    
+.LINK
+    https://github.com/hahndorf/Test-WebSite   
 #>
 
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName="Test")] 
 [OutputType([int])]
 param(
- [Parameter(Position=0)]
+  [parameter(Mandatory=$true,ParameterSetName = "ShowSite")]
+  [switch]$ShowSite,
+  [parameter(Mandatory=$true,ParameterSetName = "Server")]
+  [switch]$ShowServer,
+  [parameter(Mandatory=$true,ParameterSetName = "Install")]
+  [switch]$Install,
+  [Parameter(Position=0,ParameterSetName = "Test")]
+  [parameter(ParameterSetName = "ShowSite")]
   [string]$Name = "Default Web Site",
   [ValidatePattern("^(http*|/[-\?/\.=&a-z0-9]*)")]
+  [parameter(ParameterSetName = "Test")]
   [string]$Resource = "",
-  [switch]$install,
-  [switch]$fix,
-  [switch]$mvc,
+  [parameter(ParameterSetName = "Test")]
+  [switch]$Fix,
+  [parameter(ParameterSetName = "Test")]
+  [switch]$Mvc,
+  [parameter(ParameterSetName = "Test")]
   [switch]$DontOfferFixes,
+  [parameter(ParameterSetName = "Test")]
   [switch]$EnableFreb,
+  [parameter(ParameterSetName = "Test")]
   [switch]$DisableFreb
 )
 
@@ -118,6 +154,21 @@ param(
         $TestDataFullPath = "$env:SystemDrive\Inetpub\TestWebSiteTempData"
         $userAgentRoot = "Test-WebSite"
 
+        [int]$separatorWith = 70
+
+        # exit codes
+        [int]$ExitSuccess = 0
+        [int]$WebSuccess = 20000
+        [int]$ExitAccessDenied = 40100 
+        [int]$OSVersionNotSupported = 60198 
+        [int]$PowerShellVersionNotSupported = 60018 
+        [int]$WebAdministrationModuleMissing = 60019 
+        [int]$WebSiteNotFound = 60015 
+        [int]$AppPoolNotFound = 60010 
+        [int]$WebSiteNotRunning = 60001
+        [int]$AppPoolNotRunning = 60011
+        [int]$WebConfigMissing = 60062        
+
         # Infrastucture functions
 
         Function Get-WinFeatures()
@@ -175,19 +226,19 @@ param(
             {
                 Write-Warning "Please run this script as elevated administrator"
                 Show-PoshCommand "Start-Process -Verb runas -FilePath $PSHOME\powershell.exe"
-                Exit 40100 # Access denied.
+                Exit $ExitAccessDenied
             }
 
             if ([int]$myOS.BuildNumber -lt 7601)
             {   
                 Write-Warning  "Your OS version is not supported" 
-                Exit 60198
+                Exit $OSVersionNotSupported
             }
 
             if ([int]$PSVersionTable.PSVersion.Major -lt 2)
             {
                 Write-Warning "PowerShell version 2 or newer is required to run this script"
-                Exit 60018
+                Exit $PowerShellVersionNotSupported
             }            
 
             if(!(Get-Module -ListAvailable -Name WebAdministration))
@@ -198,7 +249,7 @@ param(
                 {
                     Install-IISFeature -name IIS-ManagementScriptingTools -skipTest
                 }
-                Exit 60019
+                Exit $WebAdministrationModuleMissing
             }              
         }
 
@@ -304,6 +355,207 @@ param(
             # clear any existing stuff
             Remove-WebConfigurationProperty -pspath $psPath  -filter "system.webServer/tracing/traceFailedRequests" -name "."
                        
+        }
+
+        # Show Information functions
+
+        Function Print-Attribute([string]$caption,[string]$value)
+        {
+            $caption = $caption + ":"
+            $caption = $caption.PadRight(23," ")
+
+            Write-Output "$caption $value" 
+        }
+
+        Function Print-Stuff($stuff)
+        {
+            Write-Output $stuff
+        }
+
+        Function Print-SectionHeader($text)
+        {
+            Print-Stuff ""
+            Print-Stuff ("=" * $separatorWith)
+            Print-Stuff "$text"
+            Print-Stuff ("=" * $separatorWith)
+            Print-Stuff ""
+        }
+
+        Function Print-SubHeader($text)
+        {
+            Print-Stuff ""
+            Print-Stuff "$text"
+            Print-Stuff ("-" * $separatorWith)
+        }
+
+        Function Show-MainObjects()
+        {
+            Print-SectionHeader "Web Sites:"
+            (Get-ChildItem IIS:\Sites| Out-String).Trim()
+            Print-SectionHeader "Application Pools:"
+            (Get-ChildItem IIS:\AppPools | FT | Out-String).Trim()
+            Print-SectionHeader "SSL Bindings:"
+            (Get-ChildItem IIS:\SslBindings | Out-String).Trim()
+            Print-SectionHeader "TLS Server Certificates: $((Get-ChildItem Cert:\LocalMachine\my | Where-Object {$_.EnhancedKeyUsageList -match "Server Authentication"}).Count)"
+            
+            netsh http show iplisten
+        }
+
+        Function Show-OSInfo()
+        {
+            Print-SubHeader "Test-WebSite output - $((Get-Date).ToString("d MMMM yyyy HH:mm:ss"))"
+
+            Print-SectionHeader "Operating System:"
+
+            $OSInfo = Get-WmiObject -Class Win32_OperatingSystem
+          #  $OSInfo = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
+            $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+
+            Print-Attribute "Caption" $($OSInfo.Caption)
+            Print-Attribute "Version" $($OSInfo.Version)
+            Print-Attribute "SystemDirectory" $($OSInfo.SystemDirectory)
+            Print-Attribute "OSArchitecture" $($OSInfo.OSArchitecture)
+            Print-Attribute "MUILanguages" $($OSInfo.MUILanguages)                    
+         }
+
+        Function Show-ServerInfo()
+        {
+            Show-OSInfo
+            Show-MainObjects
+            if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent)
+            {
+                Show-IISInfo
+            }
+        }
+
+        Function Show-IISInfo()
+        {
+            Print-SectionHeader "information about IIS:"
+
+            Print-SubHeader "Installed IIS Components"
+
+            # works in 6.2 and newer only
+            # Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS-" -and $_.State -eq "Enabled"} | Sort FeatureName | Select FeatureName | Format-Table -HideTableHeaders
+
+            # the following works in Win7/2008R2 and newer           
+            $tempFile = "$env:temp\TestWindowsFeature.log"
+            & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
+            (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()
+            Remove-Item -Path $tempFile -Force
+
+            Print-SubHeader "Global Modules"
+            
+            ((Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()     
+        }
+
+        Function Show-SiteInfo($site,$pool)
+        {
+            $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)           
+
+            Print-SectionHeader "Web Site"
+
+            Print-Attribute "Name" $($site.name)
+            Print-Attribute "PhysicalPath" $webRoot         
+            
+            Print-SubHeader "Bindings"
+
+            (($site | Select -expandproperty bindings).collection | format-table -AutoSize | Out-String).Trim()
+            
+            $limits = ($site | Select -expandproperty limits).collection
+            if ($limits.count -gt 0)
+            {
+                Print-SubHeader "Limits"
+                ($limits |format-table -AutoSize | Out-String).Trim()
+            }
+
+            Print-SubHeader "Default Documents"
+            (Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | Format-Table -HideTableHeaders  | Out-String).Trim()
+
+            Print-SubHeader "Error Pages"
+            (Get-WebConfiguration "system.webserver/httpErrors" "IIS:\sites\$($site.name)" | Format-Table -Property ErrorMode,existingResponse,defaultResponseMode  -AutoSize | Out-String).Trim()
+
+            Print-SubHeader "Authentication"
+            Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\$($site.Name)" | Sort-Object SectionPath | foreach{
+                 Write-Output ""
+                 $($_.SectionPath -replace "/system.webServer/security/authentication/","")
+                 Write-Output ""
+                 ($_ | select -expandproperty attributes | Where {$_.Name -ne "password"} | Select Name,Value | Format-Table -AutoSize | out-string).Trim()
+            }
+
+            Show-PoolInfo $pool
+
+            Print-SectionHeader "NTFS permissions"
+
+            Print-SubHeader "Folder permissions for $webRoot"
+
+            ((Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited | Format-Table -AutoSize | out-string).Trim()
+
+            $virDirs = Get-WebVirtualDirectory -site "$($site.name)"
+
+            if ($virDirs.count -gt 0)
+            {
+                Print-SectionHeader "Virtual Directories"
+                ($virDirs | Format-Table -Property Path,PhysicalPath,AllowSubDirConfig,UserName  -AutoSize | Out-String).Trim()
+            }
+
+            $apps = Get-WebApplication -site "$($site.name)"
+            
+            if ($apps.count -gt 0)
+            {
+                Print-SectionHeader "Applications"
+                ($apps | Select Path,PhysicalPath,applicationPool | Format-Table -AutoSize | Out-String).Trim()
+            }
+         }
+
+        Function Show-PoolInfo($pool)
+        {
+            Print-SectionHeader "Application Pool"
+
+            Print-Attribute "Name" $($pool.name)
+            Print-Attribute "autoStart" $($pool.autoStart)
+            Print-Attribute "enable32BitAppOnWin64" $($pool.enable32BitAppOnWin64)
+            Print-Attribute "managedRuntimeVersion" $($pool.managedRuntimeVersion)
+            Print-Attribute "managedPipelineMode" $($pool.managedPipelineMode)
+            
+            Print-Attribute "startMode" $($pool.startMode)
+
+            $pm = $pool | select -expandproperty processModel
+
+            Print-Attribute "identityType" $pm.identityType
+            Print-Attribute "userName" $pm.userName
+            Print-Attribute "loadUserProfile" $pm.loadUserProfile
+            Print-Attribute "setProfileEnvironment" $pm.setProfileEnvironment
+            Print-Attribute "LogonType" $pm.logonType
+            Print-Attribute "ManualGroupMembership" $pm.manualGroupMembership            
+        }
+
+        Function Show-Site([string]$name)
+        {
+            $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq "$name"}
+            if ($site -eq $null)
+            {
+                Write-Warning "The WebSite `'$name`' could not found"
+
+                Write-Host "Existing sites on this server:"
+                Get-ChildItem iis:\sites | Select Name | Format-Table -HideTableHeaders -AutoSize
+
+                Exit $WebSiteNotFound
+            }
+
+            $poolName = $site.applicationPool
+            $pool = Get-Item "IIS:\\AppPools\$poolName"
+
+            if ($pool -eq $null)
+            {
+                Write-Warning "Application Pool $poolName not found"
+                Write-Output "Make sure your website has a existing application pool assigned"
+                Exit $AppPoolNotFound
+            }
+
+            Show-OSInfo
+
+            Show-SiteInfo -site $site -pool $pool 
+
         }
 
         # Output Helper Functions
@@ -472,6 +724,36 @@ param(
         }
 
         # Main Process functions
+
+        Function Test-WebConfig([string]$webRoot)
+        {
+            $webConfig = Join-Path $webRoot "web.config"
+
+        $webConfigTemplate = @"
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <system.webServer>
+    </system.webServer>
+</configuration>        
+"@
+
+            if (!(Test-path $webConfig))
+            {
+                Write-Warning "Web.Config file does not exists in the web root"
+                Write-Output "Please make sure $webConfig exists."
+                $result = Confirm-Command -message "Create an empty web.config file now?"
+
+                switch ($result)
+                {
+                    0 {$webConfigTemplate | Set-Content $webConfig -Verbose}
+                    1 {}
+                }
+
+                Exit $WebConfigMissing
+            }
+
+            Show-TestSuccess -info "Configuration `"$webConfig`" exists"            
+        }
 
         Function Process-Page($site)
         {
@@ -896,12 +1178,24 @@ param(
         if ($install) {Install-OptionalTools}
         Import-Module WebAdministration -Verbose:$false 
 
+        if ($ShowServer)
+        {
+            Show-ServerInfo
+            Exit $ExitSuccess 
+        }
+
+        if ($ShowSite)
+        {
+            Show-Site -name $name
+            Exit $ExitSuccess 
+        }
+
         $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq $name}
 
         if ($site -eq $null)
         {
             Write-Warning "WebSite $name not found"
-            Exit 60015 # Not Found
+            Exit $WebSiteNotFound # Not Found
         }
         else
         {
@@ -914,7 +1208,7 @@ param(
             Write-Warning "WebSite $name is not running"
             Write-Output "Please make sure the web site is running:"
             Show-PoshCommand "Start-WebSite `"$name`""
-            Exit 60001
+            Exit $WebSiteNotRunning
         }
 
         if ($DisableFreb)
@@ -934,7 +1228,7 @@ param(
         {
             Write-Warning "Application Pool $poolName not found"
             Write-Output "Make sure your website has a existing application pool assigned"
-            Exit 60010
+            Exit $AppPoolNotFound
         }
     
         if ($pool.State -ne "Started")
@@ -942,37 +1236,12 @@ param(
             Write-Warning "Application pool $poolName is not running"
             Write-Output "Please make sure the Application pool is running:"
             Show-PoshCommand "Start-WebAppPool `"$poolName`""
-            Exit 60011
+            Exit $AppPoolNotRunning
         }
         
         $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
-        $webConfig = Join-Path $webRoot "web.config"
-
-        $webConfigTemplate = @"
-<?xml version="1.0" encoding="UTF-8"?>
-<configuration>
-    <system.webServer>
-    </system.webServer>
-</configuration>        
-"@
-
-        if (!(Test-path $webConfig))
-        {
-            Write-Warning "Web.Config file does not exists in the web root"
-            Write-Output "Please make sure $webConfig exists."
-            $result = Confirm-Command -message "Create an empty web.config file now?"
-
-            switch ($result)
-            {
-                0 {$webConfigTemplate | Set-Content $webConfig -Verbose}
-                1 {}
-            }
-
-            Exit 60062
-        }
-
-        Show-TestSuccess -info "Configuration `"$webConfig`" exists"
+        Test-WebConfig -webRoot $webRoot
 
         $script:RequestStart = Get-Date
              
@@ -983,7 +1252,7 @@ param(
         {
             Show-TestSuccess -info "The test request returned with status 200"
             Write-Host "All tests passed" -ForegroundColor Green
-            Exit 20000
+            Exit $WebSuccess
         }
         else
         {      
