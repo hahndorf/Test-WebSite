@@ -14,10 +14,9 @@
     To indicate that the resource to be checked is expected to be handled by ASP.NET MVC
     Not supported yet
 .PARAMETER install
-    Installs missing IIS components.
-.PARAMETER SkipPrerequisitesChecks
-    If specified, several checks for prerequisites are not performed. Because these cecks may take
-    some time you can choose to skip them if you are sure you have them.
+    Installs missing optional IIS components.
+.PARAMETER fix
+    Try to fix problems found.
 .PARAMETER DontOfferFixes
     If specified, the user will never be asked to run fixes. Useful for automated testing
 .PARAMETER EnableFreb
@@ -53,16 +52,19 @@ param(
   [ValidatePattern("^(http*|/[-\?/\.=&a-z0-9]*)")]
   [string]$Resource = "",
   [switch]$install,
-  [alias("skip")]
-  [switch]$SkipPrerequisitesChecks,
+  [switch]$fix,
   [switch]$mvc,
   [switch]$DontOfferFixes,
   [switch]$EnableFreb,
   [switch]$DisableFreb
 )
 
+    # we don't support input from the pipeline, we don't need begin, process, end
+    # but we still use it to group the code, Begin has all the functions
+
     Begin
     {
+
     #    $myOS = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
         $myOS = Get-WmiObject -Class Win32_OperatingSystem
 
@@ -72,17 +74,60 @@ param(
         $statusInfo.Add("401.3","This HTTP status code indicates a problem in the NTFS file system permissions. This problem may occur even if the permissions are correct for the file that you are trying to access. For example, this problem occurs if the IUSR account does not have access to the C:\Winnt\System32\Inetsrv directory. For more information about how to resolve this problem, check the article in the Microsoft Knowledge Base: 942042 ")
         $statusInfo.Add("500.19","The related configuration data for the page is invalid or can not be accessed.")
 
+        # taken from: https://support2.microsoft.com/default.aspx?scid=kb;en-us;820729
+        $ReasonPhrase = New-Object 'System.Collections.Generic.dictionary[string,string]'
+        $ReasonPhrase.Add("AppOffline","A service unavailable error occurred (an HTTP error 503). The service is not available because application errors caused the application to be taken offline.")
+        $ReasonPhrase.Add("AppPoolTimer","A service unavailable error occurred (an HTTP error 503). The service is not available because the application pool process is too busy to handle the request.")
+        $ReasonPhrase.Add("AppShutdown","A service unavailable error occurred (an HTTP error 503). The service is not available because the application shut down automatically in response to administrator policy.")
+        $ReasonPhrase.Add("BadRequest","A parse error occurred while processing a request.")
+        $ReasonPhrase.Add("Client_Reset","The connection between the client and the server was closed before the request could be assigned to a worker process. The most common cause of this behavior is that the client prematurely closes its connection to the server.")
+        $ReasonPhrase.Add("Connection_Abandoned_By_AppPool","A worker process from the application pool has quit unexpectedly or orphaned a pending request by closing its handle.")
+        $ReasonPhrase.Add("Connection_Abandoned_By_ReqQueue","A worker process from the application pool has quit unexpectedly or orphaned a pending request by closing its handle. Specific to Windows Vista and later versions and to Windows Server 2008 and later versions.")
+        $ReasonPhrase.Add("Connection_Dropped","The connection between the client and the server was closed before the server could send its final response packet. The most common cause of this behavior is that the client prematurely closes its connection to the server.")
+        $ReasonPhrase.Add("Connection_Dropped_List_Full","The list of dropped connections between clients and the server is full. Specific to Windows Vista and later versions and to Windows Server 2008 and later versions.")
+        $ReasonPhrase.Add("ConnLimit","A service unavailable error occurred (an HTTP error 503). The service is not available because the site level connection limit has been reached or exceeded.")
+        $ReasonPhrase.Add("Connections_Refused","The kernel NonPagedPool memory has dropped below 20MB and http.sys has stopped receiving new connections")
+        $ReasonPhrase.Add("Disabled","A service unavailable error occurred (an HTTP error 503). The service is not available because an administrator has taken the application offline.")
+        $ReasonPhrase.Add("EntityTooLarge","An entity exceeded the maximum size that is permitted.")
+        $ReasonPhrase.Add("FieldLength","A field length limit was exceeded.")
+        $ReasonPhrase.Add("Forbidden","A forbidden element or sequence was encountered while parsing.")
+        $ReasonPhrase.Add("Header","A parse error occurred in a header.")
+        $ReasonPhrase.Add("Hostname","A parse error occurred while processing a Hostname.")
+        $ReasonPhrase.Add("Internal","An internal server error occurred (an HTTP error 500).")
+        $ReasonPhrase.Add("Invalid_CR/LF","An illegal carriage return or line feed occurred.")
+        $ReasonPhrase.Add("LengthRequired","A required length value was missing.")
+        $ReasonPhrase.Add("N/A","A service unavailable error occurred (an HTTP error 503). The service is not available because an internal error (such as a memory allocation failure or URL Reservation List conflict) occurred.")
+        $ReasonPhrase.Add("N/I","A not-implemented error occurred (an HTTP error 501), or a service unavailable error occurred (an HTTP error 503) because of an unknown transfer encoding.")
+        $ReasonPhrase.Add("Number","A parse error occurred while processing a number.")
+        $ReasonPhrase.Add("Precondition","A required precondition was missing.")
+        $ReasonPhrase.Add("QueueFull","A service unavailable error occurred (an HTTP error 503). The service is not available because the application request queue is full.")
+        $ReasonPhrase.Add("RequestLength","A request length limit was exceeded.")
+        $ReasonPhrase.Add("Timer_AppPool","The connection expired because a request waited too long in an application pool queue for a server application to de-queue and process it. This time-out duration is <b>ConnectionTimeout</b>. By default, this value is set to two minutes.")
+        $ReasonPhrase.Add("Timer_ConnectionIdle","The connection expired and remains idle. The default <b>ConnectionTimeout</b> duration is two minutes.")
+        $ReasonPhrase.Add("Timer_EntityBody","The connection expired before the request entity body arrived. When a request clearly has an entity body, the HTTP API turns on the <b>Timer_EntityBody</b> timer. At first, the limit of this timer is set to the <b>ConnectionTimeout</b> value (typically, two minutes). Every time that another data indication is received on this request, the HTTP API resets the timer to give the connection two more minutes (or whatever is specified in <b>ConnectionTimeout</b>).")
+        $ReasonPhrase.Add("Timer_HeaderWait","The connection expired because the header parsing for a request took more time than the default limit of two minutes.")
+        $ReasonPhrase.Add("Timer_MinBytesPerSecond","The connection expired because the client was not receiving a response at a reasonable speed. The response send rate was slower than the default of 240 bytes/sec. This can be controlled with the <b>MinFileBytesPerSec</b> metabase property.")
+        $ReasonPhrase.Add("Timer_ReqQueue","The connection expired because a request waited too long in an application pool queue for a server application to de-queue. This time-out duration is <b>ConnectionTimeout</b>. By default, this value is set to two minutes. Specific to Windows Vista and later versions and to Windows Server 2008 and later versions.")
+        $ReasonPhrase.Add("Timer_Response","Reserved. Currently not used.")
+        $ReasonPhrase.Add("Timer_SslRenegotiation","The connection expired because SSL renegotiation between the client and server took longer than the default time-out of two minutes.")
+        $ReasonPhrase.Add("URL","A parse error occurred while processing a URL.")
+        $ReasonPhrase.Add("URL_Length","A URL exceeded the maximum permitted  size.")
+        $ReasonPhrase.Add("Verb","A parse error occurred while processing a verb.")
+        $ReasonPhrase.Add("Version_N/S","A version-not-supported error occurred (an HTTP error 505). ")
+
         $TestDataFullPath = "$env:SystemDrive\Inetpub\TestWebSiteTempData"
         $userAgentRoot = "Test-WebSite"
 
-        if (!($SkipPrerequisitesChecks)) 
+        # Infrastucture functions
+
+        Function Get-WinFeatures()
         {
             # this works on Windows 7+
-            Write-Output "Checking prerequisites..."
+            Write-Output "Checking installed Windows features..."
             $tempFile = "$env:temp\TestWindowsFeature.log"
             & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
-            $WinFeatures = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.State -eq "Enabled "}) | Select Name
-            Remove-Item -Path $tempFile
+            $Script:WinFeatures = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.State -eq "Enabled "}) | Select Name
+            Remove-Item -Path $tempFile            
         }
 
         Function Get-ExitCode([int]$status,[int]$sub)
@@ -105,17 +150,63 @@ param(
             Write-Host "This command has been copied to your clipboard"
         }
 
-        Function Install-IISFeature([string]$name)
+        Function Install-IISFeature([string]$name,[switch]$skipTest)
         {
-            if (Test-WindowsFeature -Name $name) 
+            if (!($skipTest)) 
             {
-                Write-Output "$name is already installed"
+                if (Test-WindowsFeature -Name $name) 
+                {
+                    Write-Output "$name is already installed"
+                    return
+                }
             }
-            else
+
+            Write-Output "Running: -online -enable-feature -featurename:$name"
+            dism.exe -online -enable-feature -featurename:$name       
+        }
+
+        Function Check-RequiredPrerequisites
+        {
+            $UserCurrent = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+            $userIsAdmin = $false
+            $UserCurrent.Groups | ForEach-Object { if($_.value -eq "S-1-5-32-544") {$userIsAdmin = $true} }
+
+            if (!($userIsAdmin))
             {
-                Write-Output "Running: -online -enable-feature -featurename:$name"
-                dism.exe -online -enable-feature -featurename:$name       
+                Write-Warning "Please run this script as elevated administrator"
+                Show-PoshCommand "Start-Process -Verb runas -FilePath $PSHOME\powershell.exe"
+                Exit 40100 # Access denied.
             }
+
+            if ([int]$myOS.BuildNumber -lt 7601)
+            {   
+                Write-Warning  "Your OS version is not supported" 
+                Exit 60198
+            }
+
+            if ([int]$PSVersionTable.PSVersion.Major -lt 2)
+            {
+                Write-Warning "PowerShell version 2 or newer is required to run this script"
+                Exit 60018
+            }            
+
+            if(!(Get-Module -ListAvailable -Name WebAdministration))
+            { 
+                Write-Warning "The required WebAdministration module is missing."
+                Show-PoshCommand "Test-WebSite -fix" "Please run:"
+                if ($fix)
+                {
+                    Install-IISFeature -name IIS-ManagementScriptingTools -skipTest
+                }
+                Exit 60019
+            }              
+        }
+
+        Function Install-OptionalTools
+        {
+            Get-WinFeatures
+            Install-IISFeature -name IIS-HttpLogging
+            Install-IISFeature -name IIS-HttpTracing 
         }
 
         Function Test-WindowsFeature()
@@ -126,7 +217,7 @@ param(
                 $Name
             )
                
-            $feature = ($WinFeatures | Where-Object {$_.Name.Trim() -eq $name})
+            $feature = ($Script:WinFeatures | Where-Object {$_.Name.Trim() -eq $name})
 
             if ($feature -ne $null)
             {
@@ -136,25 +227,6 @@ param(
             {
                 return $false
             }
-        }
-
-        Function Confirm-Command([string]$message)
-        {
-            if ($DontOfferFixes)
-            {
-                return 1
-            }
-                      
-            $yes = New-Object System.Management.Automation.Host.ChoiceDescription "&Yes", `
-               "Executes command now."
-
-            $no = New-Object System.Management.Automation.Host.ChoiceDescription "&No", `
-                "Does not execute the command"
-
-            $options = [System.Management.Automation.Host.ChoiceDescription[]]($yes, $no)
-
-            return $host.ui.PromptForChoice("", $message, $options, 1) 
-
         }
 
         Function Enable-Tracing
@@ -234,16 +306,311 @@ param(
                        
         }
 
+        # Output Helper Functions
+
         Function Show-TestSuccess([string]$info)
         {
             Write-Verbose "Test: $info "
         }          
+
+        Function Confirm-Command([string]$message)
+        {
+            if ($DontOfferFixes)
+            {
+                return 1
+            }
+                      
+            $yes = New-Object System.Management.Automation.Host.ChoiceDescription "&Yes", `
+               "Executes command now."
+
+            $no = New-Object System.Management.Automation.Host.ChoiceDescription "&No", `
+                "Does not execute the command"
+
+            $options = [System.Management.Automation.Host.ChoiceDescription[]]($yes, $no)
+
+            return $host.ui.PromptForChoice("", $message, $options, 1) 
+
+        }
 
         Function Get-UniqueUserAgent([int64]$ticks)
         {
             Return $userAgentRoot + "_" + $ticks.ToString()
         }
 
+        Function Convert-Binding($binding)
+        {
+
+                $url = $binding.protocol + "://"
+
+                $bindingInfo = $binding.BindingInformation.Split(":")
+
+                if ($bindingInfo[0] -eq "*")
+                {
+                    $url += "127.0.0.1"
+                }
+                else
+                {
+                    $url += $bindingInfo[0]
+                }
+                
+                if ($bindingInfo[2] -ne "")
+                {
+                    $url = $binding.protocol + "://" + $bindingInfo[2]
+                }
+
+                if ($bindingInfo[1] -notmatch "80|443")
+                {
+                    $url += ":" + $bindingInfo[1]
+                }
+
+            return $url
+
+        }
+       
+        Function Get-Url($site,[string]$resource)
+        {
+            $url = ""
+
+            if ($resource.StartsWith("http"))
+            {
+                return $resource
+            }
+
+            # this will return http:// before any https://
+            # we may want to add more logic which binding to use later
+            foreach($binding in ($site.Bindings.collection | Sort protocol | Select -First 1))
+            {
+                # ignore non-http protocols
+                if ($binding.protocol -match "^http")
+                {
+                    $url = Convert-Binding -binding $binding
+                    $url += $resource           
+                }
+            }
+
+            return $url
+        }
+
+        Function Check-LogFile($site)
+        {
+            # this checks for log file settings which we would like to have
+            # but we should work anyways
+
+            $logfile = $site.logfile #| Select -ExpandProperty Logfile
+            $filter = "system.applicationHost/sites/site[@name='" + $site.Name + "']/logFile"
+
+            $logOkay = $true
+
+            # check log file settings
+
+            if ($logfile.logFormat -ne "W3C")
+            {
+                Write-Warning "Please use W3C log format"
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logFormat' -value 'W3C'"
+                $logOkay = $false           
+            } 
+
+            if ($logfile.period -ne "Daily")
+            {
+                Write-Warning "Please use Daily logs"            
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'period' -value 'Daily'"
+                $logOkay = $false            
+            }
+
+            if ($logfile.logExtFileFlags -notMatch "HttpSubStatus")
+            {
+                Write-Warning "Please include the sc-substatus field in your logs"         
+            
+                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+                $logFields += ",HttpSubStatus"
+
+                $logFields = "'" + $logFields + "'"
+
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+                $logOkay = $false           
+            }
+
+            if ($logfile.logExtFileFlags -notMatch "UserAgent")
+            {
+                Write-Warning "Please include the UserAgent field in your logs"         
+            
+                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+                $logFields += ",UserAgent"
+
+                $logFields = "'" + $logFields + "'"
+
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+                $logOkay = $false            
+            } 
+            
+            if ($logfile.logExtFileFlags -notMatch "Win32Status")
+            {
+                Write-Warning "Please include the sc-Win32-Status field in your logs"         
+            
+                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
+                $logFields += ",Win32Status"
+
+                $logFields = "'" + $logFields + "'"
+
+                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
+                $logOkay = $false           
+            }
+
+            return $logOkay
+        }
+
+        Function Get-LogContent([string]$fileName,[int]$tail,[string]$exclude)
+        {
+            if ([int]$PSVersionTable.PSVersion.Major -lt 30)
+            {
+                return (Get-Content $fileName | Where-Object {$_ -notLike $exclude}) | Select -Last $tail
+            }
+            else
+            {
+                return Get-Content $fileName -Tail $tail | Where-Object {$_ -notLike $exclude}
+            } 
+        }
+
+        # Main Process functions
+
+        Function Process-Page($site)
+        {
+            $html = $script:FailedRequest.Html
+
+            Write-Verbose "Analyzing error page html"
+
+            if ($html.Length -lt 1000)
+            {
+                if ($script:FailedRequest.Server -eq "Microsoft-HTTPAPI/2.0")
+                {
+                    Write-Warning "IIS was unable to find a running application pool"
+                                   
+                    # https://support2.microsoft.com/default.aspx?scid=kb;en-us;820729
+
+                    # it seems the httperr log is only flushed to disk every minute or so, at least sometimes it takes more than 20 seconds
+                    # we can not wait for that, but it is likely that previous entries show the same problem
+
+                    # the logs may have moved, HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\HTTP\Parameters\ErrorLoggingDir
+                    $logFileName = (Get-ChildItem $env:systemRoot\system32\LogFiles\HTTPERR\ | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+
+                    if ($logFileName -ne $null)
+                    {
+                        Write-Verbose "Checking http.sys log: $logFileName"
+                        $Log = Get-LogContent -fileName $logFileName -tail 5 -exclude "#*"  # Get-Content $logFileName -Tail 5 | Where-Object {$_ -notLike "#*" }
+                        Write-Verbose "Here are the last lines, time is in UTC" 
+                        Write-Verbose "Please note that this log is not up to date, but the problem may be listed anyways"
+                        if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent)
+                        {         
+                            $Log
+                        }
+                        # store the last line in the html field to be used later
+                        $script:FailedRequest.html = $Log | Select -Last 1
+                    }                    
+                }   
+                else
+                {
+                    Write-Warning "Short response, but not from Microsoft-HTTPAPI/2.0, what can it be?"
+                }             
+            }
+            else
+            {
+                # this may only work for IIS 8.x
+                $html = $html -replace "&nbsp;",""
+                $html = $html -replace "&raquo;",""         
+                $xml = [Xml]$html                
+          
+                if ( ($xml.html.body.div.div.h3).count -eq 0)
+                {
+                    Write-Warning "Detailed local error messages seem not to be enabled"
+                    Show-PoshCommand -info "Set-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`'  -filter `"system.webServer/httpErrors`" -name `"errorMode`" -value `"DetailedLocalOnly`""
+                    return
+                }
+
+                $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d\d\d\.(\d\d?)').Groups[1].Value
+                if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
+                {
+                     $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
+                }
+            }
+            
+            # we could get other information from the page
+
+            $script:FailedRequest.Processed = $true
+            
+        }
+
+        Function Process-LogEntry($site)
+        {
+            $logOkay = Check-LogFile -site $site
+            if ($logOkay -eq $false)
+            {
+                 Write-Warning "Log file settings not as required, log file will not be used"
+                 return
+            }
+
+            # flush logbuffer to see log entries right away
+            & netsh http flush logbuffer | Out-Null 
+
+            $logfile = $site.logfile 
+                           
+            $logFileName = [System.Environment]::ExpandEnvironmentVariables($logfile.directory)
+            $logFileName += "\W3SVC" + $site.Id + "\u_ex" + (Get-Date).ToString("yyMMdd") + ".log"
+
+            if (!(Test-Path $logFileName))
+            {
+                Write-Warning "Log file not found: $logFileName" 
+                Write-Output "This may happen if none of the bindings for the site work" 
+                Write-Output "Try again using the verbose switch: Test-WebSite.ps1 -verbose "
+                Return
+            }
+           
+            Write-Verbose "Checking $logFileName"
+            
+            # we assume the entry we are looking for is the last one, so using -tail 50
+            # gives us for few more, just in case.
+
+            $Log = Get-Content $logFileName -Tail 50 | where {$_ -notLike "#[D,S-V]*" }
+
+            $fields = ""
+            $statusColumn = 0
+
+            $id = Get-UniqueUserAgent -ticks $script:FailedRequest.Ticks   
+                
+            Write-Verbose "looking for row with: $id"
+                       
+            $lineFound = $false
+
+            foreach ($Row in $Log) {
+
+                if ($row.StartsWith("#Fields"))
+                {
+                    $fields = $row
+                }
+
+                if ($row -match $id)
+                {                  
+                    $fieldColumns = $fields.Split(" ")
+                    $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
+                    $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
+                    $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
+                    $cols = $row.Split(" ") 
+
+                    $script:FailedRequest.SubStatus = $cols[$subStatusColumn-1]
+                    $script:FailedRequest.Win32 = $cols[$win32StatusColumn-1]
+                    $script:FailedRequest.Processed = $true
+
+                    Write-Verbose "Found: $row"
+                    $lineFound = $true
+                    break
+                }
+            } # foreach row
+
+            if(!($lineFound))
+            {
+                Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
+            }                         
+        }
+       
         Function Test-WebPage([string]$url)        
         {
             Write-verbose "Testing: $url"
@@ -294,36 +661,6 @@ param(
             }
         }
 
-        Function Convert-Binding($binding)
-        {
-
-                $url = $binding.protocol + "://"
-
-                $bindingInfo = $binding.BindingInformation.Split(":")
-
-                if ($bindingInfo[0] -eq "*")
-                {
-                    $url += "127.0.0.1"
-                }
-                else
-                {
-                    $url += $bindingInfo[0]
-                }
-                
-                if ($bindingInfo[2] -ne "")
-                {
-                    $url = $binding.protocol + "://" + $bindingInfo[2]
-                }
-
-                if ($bindingInfo[1] -notmatch "80|443")
-                {
-                    $url += ":" + $bindingInfo[1]
-                }
-
-            return $url
-
-        }
-       
         Function Process-Problem
         {
             [OutputType([int])]
@@ -443,8 +780,46 @@ param(
             elseif ($fullStatus -eq "503.0")
             {             
                 Write-Output "Service Unavailable"
-                Write-Output "Check the account of the application pool. Is the password correct and not expired?"
-                Write-Output "TO-DO: get account name and check account status"
+                
+                Write-Output "There are many potential reasons for this problem"
+                Write-Output "If you are running a custom application, please check the Windows event logs"
+
+                $pastSeconds = 10
+                $time = (Get-Date) – (New-TimeSpan -Minute $pastSeconds)
+
+                # never get more than 50 events
+                $errorEvents = Get-WinEvent -MaxEvents 50 -FilterHashtable @{Level=2;logname='application';StartTime=$time}  -Verbose:$false
+
+                if ($errorEvents.Count -gt 0)
+                {
+                  Write-Warning "$($errorEvents.Count) errors found in the application event log in the last $($pastSeconds ) seconds"
+                  $errorEvents | Select TimeCreated, ProviderName, Message | fl
+                }
+                else
+                {
+                   Write-Output "No errors found in the application event log in the last $($pastSeconds ) seconds"
+                }
+
+                #Write-Output $script:FailedRequest.Html
+                                 
+                # get the ReasonPhrase from the last line of the httperr.log                        
+                $lastKnowProblem = [regex]::match($script:FailedRequest.Html,' 503 \d+ ([\w\/_]+) ').Groups[1].Value
+
+                if ($ReasonPhrase.ContainsKey($lastKnowProblem))
+                {
+                    Write-Output "Last known problem:"
+                    Write-Output $ReasonPhrase[$lastKnowProblem]
+                }
+                              
+                if ($AppProcessmodel.identityType -eq "SpecificUser")
+                {
+                    Write-Output "`r`nThe Application pool `'$($pool.Name)`' is running under account: `'$($AppProcessmodel.userName)`' "
+                    Write-Output "Is this account active, the password correct and not expired?"
+                    Write-Output "Output of `'net user $($AppProcessmodel.userName)`':`n"
+                    & net user $AppProcessmodel.userName
+                    Write-Output "You may want to reset the password in the Advanced Settings for the application pool, in the `'Process Model Identity`' dialog."
+                }
+                # Write-Output ($AppProcessmodel | fl * |Out-String)
             }
             elseif ($fullStatus -eq "401.3")
             {
@@ -513,298 +888,13 @@ param(
             Exit Get-ExitCode -status $script:FailedRequest.Status -sub $script:FailedRequest.SubStatus
         }
 
-        Function Check-Prerequisites
-        {            
-            $UserCurrent = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-            $userIsAdmin = $false
-            $UserCurrent.Groups | ForEach-Object { if($_.value -eq "S-1-5-32-544") {$userIsAdmin = $true} }
-
-            if (!($userIsAdmin))
-            {
-                Write-Warning "Please run this script as elevated administrator"
-                Show-PoshCommand "Start-Process -Verb runas -FilePath $PSHOME\powershell.exe"
-                Exit 40100 # Access denied.
-            }
-
-            if ([int]$myOS.BuildNumber -lt 7601)
-            {   
-                Write-Warning  "Your OS version is not supported" 
-                Exit 60198
-            }
-
-            if ([int]$PSVersionTable.PSVersion.Major -lt 2)
-            {
-                Write-Warning "PowerShell version 2 or newer is required to run this script"
-                Exit 60018
-            }            
-
-            if(!(Get-Module -ListAvailable -Name WebAdministration))
-            { 
-                Write-Warning "The required WebAdministration module is missing."
-                Show-PoshCommand "Test-WebSite -install" "Please run:"
-                if ($install)
-                {
-                    Install-IISFeature -name IIS-ManagementScriptingTools
-                }
-                else
-                {
-                    $componentsMissing = $true
-                }
-            }
-
-            $componentsMissing = $false
-
-            if (!(Test-WindowsFeature -Name IIS-HttpLogging))
-            {
-                Write-Verbose "HttpLogging module is missing" 
-                $componentsMissing = $true                 
-            }
-            if (!(Test-WindowsFeature -Name IIS-HttpTracing))
-            {
-                Write-Verbose "Failed Request tracing module is missing" 
-                $componentsMissing = $true                        
-            }
-                       
-            if ($componentsMissing)
-            {
-                if ($install)
-                {
-                    Install-IISFeature -name IIS-HttpLogging 
-                    Install-IISFeature -name IIS-HttpTracing 
-                }
-                else
-                {
-                    Show-PoshCommand "Test-WebSite -install" "One or more optional modules are missing, for better results you may run:"
-                }   
-            }      
-        }
-
-        Function Get-Url($site,[string]$resource)
-        {
-            $url = ""
-
-            if ($resource.StartsWith("http"))
-            {
-                return $resource
-            }
-
-            # this will return http:// before any https://
-            # we may want to add more logic which binding to use later
-            foreach($binding in ($site.Bindings.collection | Sort protocol | Select -First 1))
-            {
-                # ignore non-http protocols
-                if ($binding.protocol -match "^http")
-                {
-                    $url = Convert-Binding -binding $binding
-                    $url += $resource           
-                }
-            }
-
-            return $url
-        }
-
-        Function Check-LogFile($site)
-        {
-            # this checks for log file settings which we would like to have
-            # but we should work anyways
-
-            $logfile = $site.logfile #| Select -ExpandProperty Logfile
-            $filter = "system.applicationHost/sites/site[@name='" + $site.Name + "']/logFile"
-
-            $logOkay = $true
-
-            # check log file settings
-
-            if ($logfile.logFormat -ne "W3C")
-            {
-                Write-Warning "Please use W3C log format"
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logFormat' -value 'W3C'"
-                $logOkay = $false           
-            } 
-
-            if ($logfile.period -ne "Daily")
-            {
-                Write-Warning "Please use Daily logs"            
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'period' -value 'Daily'"
-                $logOkay = $false            
-            }
-
-            if ($logfile.logExtFileFlags -notMatch "HttpSubStatus")
-            {
-                Write-Warning "Please include the sc-substatus field in your logs"         
-            
-                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
-                $logFields += ",HttpSubStatus"
-
-                $logFields = "'" + $logFields + "'"
-
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-                $logOkay = $false           
-            }
-
-            if ($logfile.logExtFileFlags -notMatch "UserAgent")
-            {
-                Write-Warning "Please include the UserAgent field in your logs"         
-            
-                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
-                $logFields += ",UserAgent"
-
-                $logFields = "'" + $logFields + "'"
-
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-                $logOkay = $false            
-            } 
-            
-            if ($logfile.logExtFileFlags -notMatch "Win32Status")
-            {
-                Write-Warning "Please include the sc-Win32-Status field in your logs"         
-            
-                $logFields = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter $filter -name "logExtFileFlags").ToString()               
-                $logFields += ",Win32Status"
-
-                $logFields = "'" + $logFields + "'"
-
-                Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter $filter -name 'logExtFileFlags' -value $logFields"
-                $logOkay = $false           
-            }
-
-            return $logOkay
-        }
-
-        Function Process-Page($site)
-        {
-            $html = $script:FailedRequest.Html
-
-            Write-Verbose "Analyzing error page html"
-
-            if ($html.Length -lt 1000)
-            {
-                if ($script:FailedRequest.Server -eq "Microsoft-HTTPAPI/2.0")
-                {
-                    Write-Warning "IIS was unable to find a running application pool"
-
-                    # the logs may have moved, HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\HTTP\Parameters\ErrorLoggingDir
-                    $logFileName = (Get-ChildItem $env:systemRoot\system32\LogFiles\HTTPERR\ | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-
-                    if ($logFileName -ne $null)
-                    {
-                        Write-Output "Checking http.sys log: $logFileName"
-                        $Log = Get-Content $logFileName -Tail 5 | Where-Object {$_ -notLike "#*" }
-                        Write-output "Here are the last 5 lines, time is UTC"                       
-                        $Log
-                    }                    
-                }   
-                else
-                {
-                    Write-Warning "Short response, but not from Microsoft-HTTPAPI/2.0, what can it be?"
-                }             
-            }
-            else
-            {
-                # this may only work for IIS 8.x
-                $html = $html -replace "&nbsp;",""
-                $html = $html -replace "&raquo;",""         
-                $xml = [Xml]$html                
-          
-                if ( ($xml.html.body.div.div.h3).count -eq 0)
-                {
-                    Write-Warning "Detailed local error messages seem not to be enabled"
-                    Show-PoshCommand -info "Set-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`'  -filter `"system.webServer/httpErrors`" -name `"errorMode`" -value `"DetailedLocalOnly`""
-                    return
-                }
-
-                $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d\d\d\.(\d\d?)').Groups[1].Value
-                if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
-                {
-                     $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
-                }
-            }
-            
-            # we could get other information from the page
-
-            $script:FailedRequest.Processed = $true
-            
-        }
-
-        Function Process-LogEntry($site)
-        {
-            $logOkay = Check-LogFile -site $site
-            if ($logOkay -eq $false)
-            {
-                 Write-Warning "Log file settings not as required, log file will not be used"
-                 return
-            }
-
-            # flush logbuffer to see log entries right away
-            & netsh http flush logbuffer | Out-Null 
-
-            $logfile = $site.logfile 
-                           
-            $logFileName = [System.Environment]::ExpandEnvironmentVariables($logfile.directory)
-            $logFileName += "\W3SVC" + $site.Id + "\u_ex" + (Get-Date).ToString("yyMMdd") + ".log"
-
-            if (!(Test-Path $logFileName))
-            {
-                Write-Warning "Log file not found: $logFileName" 
-                Write-Output "This may happen if none of the bindings for the site work" 
-                Write-Output "Try again using the verbose switch: Test-WebSite.ps1 -verbose "
-                Return
-            }
-           
-            Write-Verbose "Checking $logFileName"
-            
-            # we assume the entry we are looking for is the last one, so using -tail 50
-            # gives us for few more, just in case.
-
-            $Log = Get-Content $logFileName -Tail 50 | where {$_ -notLike "#[D,S-V]*" }
-
-            $fields = ""
-            $statusColumn = 0
-
-            $id = Get-UniqueUserAgent -ticks $script:FailedRequest.Ticks   
-                
-            Write-Verbose "looking for row with: $id"
-                       
-            $lineFound = $false
-
-            foreach ($Row in $Log) {
-
-                if ($row.StartsWith("#Fields"))
-                {
-                    $fields = $row
-                }
-
-                if ($row -match $id)
-                {                  
-                    $fieldColumns = $fields.Split(" ")
-                    $statusColumn = [array]::IndexOf($fieldColumns, "sc-status")
-                    $subStatusColumn = [array]::IndexOf($fieldColumns, "sc-substatus")
-                    $win32StatusColumn = [array]::IndexOf($fieldColumns, "sc-win32-status")
-                    $cols = $row.Split(" ") 
-
-                    $script:FailedRequest.SubStatus = $cols[$subStatusColumn-1]
-                    $script:FailedRequest.Win32 = $cols[$win32StatusColumn-1]
-                    $script:FailedRequest.Processed = $true
-
-                    Write-Verbose "Found: $row"
-                    $lineFound = $true
-                    break
-                }
-            } # foreach row
-
-            if(!($lineFound))
-            {
-                Write-output "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
-            }                         
-        }
-
-        if (!($SkipPrerequisitesChecks)) {Check-Prerequisites}
-        Import-Module WebAdministration -Verbose:$false
-        
     }
 
     Process
     {
+        Check-RequiredPrerequisites
+        if ($install) {Install-OptionalTools}
+        Import-Module WebAdministration -Verbose:$false 
 
         $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq $name}
 

@@ -32,7 +32,7 @@ Describe "Test-WebSite" {
 
         It 'No WebSite' -test {
         {
-            & .\Test-WebSite.ps1 -Name Test1 -SkipPrerequisitesChecks -DontOfferFixes
+            & .\Test-WebSite.ps1 -Name Test1 -DontOfferFixes
         }  | should not throw
 
             $lastexitcode | should be 60015
@@ -42,7 +42,7 @@ Describe "Test-WebSite" {
         {            
             New-Website -Name Test2 -PhysicalPath $env:temp -Port 10002 -id 10002| Stop-Website
             
-            & .\Test-WebSite.ps1 -Name Test2 -SkipPrerequisitesChecks -DontOfferFixes
+            & .\Test-WebSite.ps1 -Name Test2 -DontOfferFixes
         }  | should not throw
 
             $lastexitcode | should be 60001
@@ -55,7 +55,7 @@ Describe "Test-WebSite" {
 
             New-Website -Name Test3 -PhysicalPath $webRoot -Port 10003 -id 10003
             
-            & .\Test-WebSite.ps1 -Name Test3 -SkipPrerequisitesChecks -DontOfferFixes
+            & .\Test-WebSite.ps1 -Name Test3 -DontOfferFixes
             }  | should not throw
 
             $lastexitcode | should be 60062
@@ -79,7 +79,7 @@ Describe "Test-WebSite" {
 
             New-Website -Name Test4 -PhysicalPath $webRoot -Port 10004 -id 10004
             
-            & .\Test-WebSite.ps1 -Name Test4 -SkipPrerequisitesChecks -DontOfferFixes
+            & .\Test-WebSite.ps1 -Name Test4 -DontOfferFixes
              }  | should not throw
 
             $lastexitcode | should be 40314
@@ -92,7 +92,7 @@ Describe "Test-WebSite" {
             "<html>Test page</html>" | Out-file $homepage
             Start-Sleep -Milliseconds 50
             
-            & .\Test-WebSite.ps1 -Name Test4 -Resource "/default.htm" -SkipPrerequisitesChecks -DontOfferFixes
+            & .\Test-WebSite.ps1 -Name Test4 -Resource "/default.htm" -DontOfferFixes
             }  | should not throw
 
             $lastexitcode | should be 20000
@@ -117,7 +117,7 @@ Describe "Test-WebSite" {
 
             New-Website -Name Test5 -PhysicalPath $webRoot -Port 10005 -id 10005
             
-            & .\Test-WebSite.ps1 -Name Test5 -SkipPrerequisitesChecks -DontOfferFixes
+            & .\Test-WebSite.ps1 -Name Test5 -DontOfferFixes
              }  | should not throw
 
             $lastexitcode | should be 50019
