@@ -1,6 +1,10 @@
 # Test-WebSite
 A PowerShell script to test an IIS website for the most common setup problems.
 
+### Installation and Usage
+
+- [How to get, run and troubleshoot the script](Usage.md)
+
 ### Description
 
 You should run this when you are having a problem with your site setup on IIS.
@@ -18,6 +22,8 @@ The script can either just display information about the server (-ShowServer) or
 
 The displayed information should be helpful for troubleshooting.
 
+The purpose of this script is to allow people to fix their problems themselves and to create less support calls. So I wont do any support for IIS problems here.
+
 ### Requirements
 
 - IIS 7.5+ (not all tested)
@@ -27,10 +33,6 @@ The displayed information should be helpful for troubleshooting.
 
 This means the scripts run on Windows 7 SP1 without any additional downloads.
 It may work on Server 2008, but you have to install PowerShell 2 and the IIS PowerShell module.
-
-### Installation and Usage
-
-- [How to get, run and troubleshoot the script](Usage.md)
 
 ### Version History
 
