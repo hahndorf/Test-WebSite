@@ -16,16 +16,18 @@ Describe "Test-WebSite" {
 
     # exit codes
     [int]$ExitSuccess = 0
-    [int]$WebSuccess = 20000
-    [int]$ExitAccessDenied = 40100 
-    [int]$OSVersionNotSupported = 60198 
-    [int]$PowerShellVersionNotSupported = 60018 
-    [int]$WebAdministrationModuleMissing = 60019 
-    [int]$WebSiteNotFound = 60015 
-    [int]$AppPoolNotFound = 60010 
-    [int]$WebSiteNotRunning = 60001
-    [int]$AppPoolNotRunning = 60011
-    [int]$WebConfigMissing = 60062
+    [int]$WebSuccess = 200000
+    [int]$ExitAccessDenied = 400100 
+    [int]$OSVersionNotSupported = 600198 
+    [int]$AppPoolNotFound = 600010 
+    [int]$WebSiteNotRunning = 600001
+    [int]$AppPoolNotRunning = 600011
+    [int]$NoUrlProvided = 600013 
+    [int]$NoBindingFound = 600014 
+    [int]$WebSiteNotFound = 600015 
+    [int]$PowerShellVersionNotSupported = 600018 
+    [int]$WebAdministrationModuleMissing = 600019
+    [int]$WebConfigMissing = 600062
 
     function Remove-WebRoot([string]$filePath)
     {
@@ -96,10 +98,10 @@ Describe "Test-WebSite" {
             & .\Test-WebSite.ps1 -Name Test4 -DontOfferFixes
              }  | should not throw
 
-            $lastexitcode | should be 40314 # should return a 403.14
+            $lastexitcode | should be 403014 # should return a 403.14
         }
         
-      It 'Basic Page okay' -test {
+        It 'Basic Page okay' -test {
         {            
             $webRoot = Join-Path $tempFolder "test4"
             $homepage = Join-Path $webRoot "default.htm"
@@ -110,8 +112,76 @@ Describe "Test-WebSite" {
             }  | should not throw
 
             $lastexitcode | should be $WebSuccess
+        }    
+
+        It 'Four-Hundred' -test {
+        {                        
+            & .\Test-WebSite.ps1 -Name Test4 -Resource "/%" -DontOfferFixes
+            }  | should not throw
+
+            $lastexitcode | should be 400000
+        }         
+         
+
+      It 'IP Restrictions-403-503' -test {
+        {     
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/ipSecurity" -name "allowUnlisted" -value "False"
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/ipSecurity" -name "denyAction" -value "Forbidden"
+            
+            & .\Test-WebSite.ps1 -Name Test4 -Resource "/default.htm" -DontOfferFixes
+            }  | should not throw
+
+            $lastexitcode | should be 403503
         }     
+     
+        It 'IP Restrictions-404-503' -test {
+        {     
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/ipSecurity" -name "allowUnlisted" -value "False"
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/ipSecurity" -name "denyAction" -value "NotFound"
+            
+            & .\Test-WebSite.ps1 -Name Test4 -Resource "/default.htm" -DontOfferFixes
+            }  | should not throw
+
+            $lastexitcode | should be 404503
+        }    
         
+        It 'IP Restrictions-401-503' -test {
+        {     
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/ipSecurity" -name "allowUnlisted" -value "False"
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/ipSecurity" -name "denyAction" -value "Unauthorized"
+            
+            & .\Test-WebSite.ps1 -Name Test4 -Resource "/default.htm" -DontOfferFixes
+            }  | should not throw
+
+            $lastexitcode | should be 401503
+        }  
+
+        It 'Logon failed-401-2' -test {
+        {     
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/ipSecurity" -name "allowUnlisted" -value "True"
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/authentication/anonymousAuthentication" -name "enabled" -value "False"
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/authentication/basicAuthentication" -name "enabled" -value "True"
+            
+            & .\Test-WebSite.ps1 -Name Test4 -Resource "/default.htm" -DontOfferFixes
+            }  | should not throw
+
+            $lastexitcode | should be 401002
+        }         
+        
+      
+        
+        It 'IP Restrictions-404' -test {
+        {     
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/ipSecurity" -name "allowUnlisted" -value "False"
+            Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location 'test4' -filter "system.webServer/security/ipSecurity" -name "denyAction" -value "NotFound"
+            
+            & .\Test-WebSite.ps1 -Name Test4 -Resource "/default.htm" -DontOfferFixes
+            }  | should not throw
+
+            $lastexitcode | should be 404503
+        }         
+        
+     
         
         It 'BrokenWebConfigXML' -test {
         {            
@@ -134,7 +204,7 @@ Describe "Test-WebSite" {
             & .\Test-WebSite.ps1 -Name Test5 -DontOfferFixes
              }  | should not throw
 
-            $lastexitcode | should be 50019 # should return a 500.19
+            $lastexitcode | should be 500019 # should return a 500.19
         }               
 
 #        It 'Web1' -test {
