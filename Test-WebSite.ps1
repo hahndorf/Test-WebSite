@@ -904,7 +904,7 @@ param(
                     return
                 }
 
-                $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d\d\d\.(\d\d?)').Groups[1].Value
+                $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d{3}.(\d{1,3})').Groups[1].Value
                 if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
                 {
                      $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
@@ -1270,6 +1270,26 @@ param(
                         Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" -intro "Or use the ApplicationPoolIdentity as user for anonymous access" 
                     }                                                  
                 }
+            }
+            elseif ($fullStatus -match "40[143]\.503")
+            {
+                Publish-Text -text "The request was disallowed because of IP/Domain restrictions."
+                
+                $allowUnlisted = [bool](Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location "$($site.name)" -filter "system.webServer/security/ipSecurity" -name "allowUnlisted").Value          
+                
+                if (!($allowUnlisted))
+                {
+                    Publish-Warning -text "All unlisted addresses are NOT allowed"
+                }
+                $ipRe = (Get-WebConfiguration "system.webserver/security/ipsecurity/*" "IIS:\sites\$($site.name)" | Select ipAddress,subnetMask,domainName,allowed | ft -AutoSize | Out-String).Trim()
+
+                if ($ipRe -ne $null)
+                {
+                    Publish-Text -text "Review these:"
+                    Publish-Text -text $ipRe  
+                }                        
+                Publish-Text -text "Check both the site and the server level."                       
+
             }
             else
             {
