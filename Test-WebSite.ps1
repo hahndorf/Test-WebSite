@@ -75,11 +75,12 @@
 
 .NOTES
 
-    The exit value is an integer number between 0 and 70000
-    It is calculated by multiplying the http status times 100 and add the substatus
-    So an normal 200-Okay is 20000
-    a 404.8 is 40408
-    a 500.19 is 50019
+    The exit value is an integer number: 0 or between 200000 and 700000
+    It is calculated by multiplying the http status times 1000 and adding the substatus
+    So an normal 200-Okay is 200000
+    a 404.8 is 404008
+    a 500.19 is 500019
+    a 403.503 is 403503
 
     Should work with PowerShell 2 on Windows 7 SP1 and anything newer
 
@@ -187,18 +188,18 @@ param(
 
         # exit codes
         [int]$ExitSuccess = 0
-        [int]$WebSuccess = 20000
-        [int]$ExitAccessDenied = 40100 
-        [int]$OSVersionNotSupported = 60198 
-        [int]$AppPoolNotFound = 60010 
-        [int]$WebSiteNotRunning = 60001
-        [int]$AppPoolNotRunning = 60011
-        [int]$NoUrlProvided = 60013 
-        [int]$NoBindingFound = 60014 
-        [int]$WebSiteNotFound = 60015 
-        [int]$PowerShellVersionNotSupported = 60018 
-        [int]$WebAdministrationModuleMissing = 60019
-        [int]$WebConfigMissing = 60062  
+        [int]$WebSuccess = 200000
+        [int]$ExitAccessDenied = 400100 
+        [int]$OSVersionNotSupported = 600198 
+        [int]$AppPoolNotFound = 600010 
+        [int]$WebSiteNotRunning = 600001
+        [int]$AppPoolNotRunning = 600011
+        [int]$NoUrlProvided = 600013 
+        [int]$NoBindingFound = 600014 
+        [int]$WebSiteNotFound = 600015 
+        [int]$PowerShellVersionNotSupported = 600018 
+        [int]$WebAdministrationModuleMissing = 600019
+        [int]$WebConfigMissing = 600062  
       
         # Infrastucture functions
 
@@ -255,7 +256,7 @@ param(
 
         Function Get-ExitCode([int]$status,[int]$sub)
         {
-            return ($status * 100) + $sub
+            return ($status * 1000) + $sub
         }
 
         Function Show-PoshCommand([string]$info,[string]$intro)
@@ -894,15 +895,34 @@ param(
             {
                 # this may only work for IIS 8.x
                 $html = $html -replace "&nbsp;",""
-                $html = $html -replace "&raquo;",""         
-                $xml = [Xml]$html                
-          
-                if ( ($xml.html.body.div.div.h3).count -eq 0)
+                $html = $html -replace "&raquo;",""    
+                
+                try
                 {
-                    Publish-Warning -text "Detailed local error messages seem not to be enabled"
-                    Show-PoshCommand -info "Set-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`'  -filter `"system.webServer/httpErrors`" -name `"errorMode`" -value `"DetailedLocalOnly`""
+                    $xml = [Xml]$html
+
+                    if ( ($xml.html.body.div.div.h3).count -eq 0)
+                    {
+                        Publish-Warning -text "Detailed local error messages seem not to be enabled"
+                        Show-PoshCommand -info "Set-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`'  -filter `"system.webServer/httpErrors`" -name `"errorMode`" -value `"DetailedLocalOnly`""
+                        return
+                    }
+
+                }
+                catch [System.Management.Automation.PSInvalidCastException]
+                {
+                    Publish-Verbose -text "Returning html is not valid XML:" 
                     return
                 }
+                catch [System.Net.WebException],[System.Exception]
+                {
+                     $_ | fl *
+                     Publish-Warning -text "Something went wrong" 
+                     return
+                }
+                finally
+                {
+                }                                                             
 
                 $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d{3}.(\d{1,3})').Groups[1].Value
                 if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
@@ -1148,6 +1168,8 @@ param(
             $errorPageFile = $script:FailedRequest.Status.ToString() + "-" + $script:FailedRequest.SubStatus.ToString() + ".htm"
             $errorPageFile = Join-Path $errorPageDir.FullName $errorPageFile
 
+            $viewDetailedError = "More information about this error should be available in the browser when turning on detailed error pages in IIS."
+
             if (Test-Path $errorPageFile)
             {
                 Publish-Text -text "----------------------------------------------------------------------"
@@ -1160,7 +1182,56 @@ param(
 
             Publish-Text "Suggested solution:"
 
-            if ($fullStatus -eq "404.0")
+            if ($fullStatus -eq "400.0")
+            {
+                Publish-Text -text "Bad request, check your -resource value for invalid characters."
+            }
+            elseif ($fullStatus -eq "401.1")
+            {
+                Publish-Text -text $viewDetailedError
+            }
+            elseif ($fullStatus -eq "401.2")
+            {
+                Publish-Text -text $viewDetailedError
+            }
+            elseif ($fullStatus -eq "401.3")
+            {
+                If (Test-Path $potentialResource)
+                {
+                    Publish-Text -text "Here are the permissions for file: $potentialResource"
+                    (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
+                    # show the user running the pool
+                    # suggest acl change to fix this problem
+                    
+                    if ($AppProcessmodel.identityType -eq "ApplicationPoolIdentity")
+                    {
+                        Publish-Text -text "`r`nThe Application pool is running under: `"IIS APPPOOL\$($pool.name)`""
+                    }
+                    else
+                    {
+                        Publish-Text -text "The Application pool is running under: $($AppProcessmodel.identityType)"
+                    }   
+                    
+                    Publish-Text -text ""       
+                    
+                    if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
+                    {
+                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " -intro "You may want to give read access to IIS_IUSRS"
+                        Show-PoshCommand -info "& icacls.exe `"$webRoot`" /T /grant `"BUILTIN\IIS_IUSRS:(OI)(CI)(RX)`" " -intro "Or better, set read permission for the webroot to IIS_IUSRS"
+                    }  
+                    else
+                    {                        
+                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"IUSR:RX`" " -intro "You may want to give read access to IUSR"
+                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant /T `"IUSR:(OI)(CI)(RX)`" " -intro "Or give read access to IUSR for the whole webroot folder"
+                        Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" -intro "Or use the ApplicationPoolIdentity as user for anonymous access" 
+                    }                                                  
+                }
+            }
+            elseif ($fullStatus -eq "403.1")
+            {
+                Publish-Text -text "Please read: https://support.microsoft.com/en-us/kb/942065"
+            }
+            elseif ($fullStatus -eq "404.0")
             {
                 Publish-Text -text "The file `'$potentialResource`' does not exists on disk, please double check the location."
             }
@@ -1182,6 +1253,26 @@ param(
                     Show-PoshCommand "Add-WebConfigurationProperty -pspath `'MACHINE/WEBROOT/APPHOST/$($site.Name)`' -filter 'system.webServer/staticContent' -name '.' -value @{fileExtension=`'$extension`';mimeType='text/html'}" `
                     -intro "Add a new MIME type, but make sure your are using the correct type for this file"
                 }
+            }
+            elseif ($fullStatus -match "40[143]\.503")
+            {
+                Publish-Text -text "The request was disallowed because of IP/Domain restrictions."
+                
+                $allowUnlisted = [bool](Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location "$($site.name)" -filter "system.webServer/security/ipSecurity" -name "allowUnlisted").Value          
+                
+                if (!($allowUnlisted))
+                {
+                    Publish-Warning -text "All unlisted addresses are NOT allowed"
+                }
+                $ipRe = (Get-WebConfiguration "system.webserver/security/ipsecurity/*" "IIS:\sites\$($site.name)" | Select ipAddress,subnetMask,domainName,allowed | ft -AutoSize | Out-String).Trim()
+
+                if ($ipRe -ne $null)
+                {
+                    Publish-Text -text "Review these:"
+                    Publish-Text -text $ipRe  
+                }                        
+                Publish-Text -text "Check both the site and the server level."                       
+
             }
             elseif ($fullStatus -eq "500.19")
             {             
@@ -1237,59 +1328,6 @@ param(
                     Publish-Text -text "You may want to reset the password in the Advanced Settings for the application pool, in the `'Process Model Identity`' dialog."
                 }
                 # Write-Output ($AppProcessmodel | fl * |Out-String)
-            }
-            elseif ($fullStatus -eq "401.3")
-            {
-                If (Test-Path $potentialResource)
-                {
-                    Publish-Text -text "Here are the permissions for file: $potentialResource"
-                    (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
-                    # show the user running the pool
-                    # suggest acl change to fix this problem
-                    
-                    if ($AppProcessmodel.identityType -eq "ApplicationPoolIdentity")
-                    {
-                        Publish-Text -text "`r`nThe Application pool is running under: `"IIS APPPOOL\$($pool.name)`""
-                    }
-                    else
-                    {
-                        Publish-Text -text "The Application pool is running under: $($AppProcessmodel.identityType)"
-                    }   
-                    
-                    Publish-Text -text ""       
-                    
-                    if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
-                    {
-                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " -intro "You may want to give read access to IIS_IUSRS"
-                        Show-PoshCommand -info "& icacls.exe `"$webRoot`" /T /grant `"BUILTIN\IIS_IUSRS:(OI)(CI)(RX)`" " -intro "Or better, set read permission for the webroot to IIS_IUSRS"
-                    }  
-                    else
-                    {                        
-                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"IUSR:RX`" " -intro "You may want to give read access to IUSR"
-                        Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant /T `"IUSR:(OI)(CI)(RX)`" " -intro "Or give read access to IUSR for the whole webroot folder"
-                        Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" -intro "Or use the ApplicationPoolIdentity as user for anonymous access" 
-                    }                                                  
-                }
-            }
-            elseif ($fullStatus -match "40[143]\.503")
-            {
-                Publish-Text -text "The request was disallowed because of IP/Domain restrictions."
-                
-                $allowUnlisted = [bool](Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location "$($site.name)" -filter "system.webServer/security/ipSecurity" -name "allowUnlisted").Value          
-                
-                if (!($allowUnlisted))
-                {
-                    Publish-Warning -text "All unlisted addresses are NOT allowed"
-                }
-                $ipRe = (Get-WebConfiguration "system.webserver/security/ipsecurity/*" "IIS:\sites\$($site.name)" | Select ipAddress,subnetMask,domainName,allowed | ft -AutoSize | Out-String).Trim()
-
-                if ($ipRe -ne $null)
-                {
-                    Publish-Text -text "Review these:"
-                    Publish-Text -text $ipRe  
-                }                        
-                Publish-Text -text "Check both the site and the server level."                       
-
             }
             else
             {
