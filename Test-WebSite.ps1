@@ -18,7 +18,7 @@
     Not supported yet
 .PARAMETER Install
     Installs missing optional IIS components.
-    Http logging and Failed Request Tracing
+    Http Errors, Http logging and Failed Request Tracing
 .PARAMETER Fix
     Try to fix problems found.
 .PARAMETER Show
@@ -139,47 +139,6 @@ param(
         $statusInfo.Add("404.3","The current MIME mapping for the requested extension type is not valid or is not configured.")
         $statusInfo.Add("401.3","This HTTP status code indicates a problem in the NTFS file system permissions. This problem may occur even if the permissions are correct for the file that you are trying to access. For example, this problem occurs if the IUSR account does not have access to the C:\Winnt\System32\Inetsrv directory. For more information about how to resolve this problem, check the article in the Microsoft Knowledge Base: 942042 ")
         $statusInfo.Add("500.19","The related configuration data for the page is invalid or can not be accessed.")
-
-        # taken from: https://support2.microsoft.com/default.aspx?scid=kb;en-us;820729
-        $ReasonPhrase = New-Object 'System.Collections.Generic.dictionary[string,string]'
-        $ReasonPhrase.Add("AppOffline","A service unavailable error occurred (an HTTP error 503). The service is not available because application errors caused the application to be taken offline.")
-        $ReasonPhrase.Add("AppPoolTimer","A service unavailable error occurred (an HTTP error 503). The service is not available because the application pool process is too busy to handle the request.")
-        $ReasonPhrase.Add("AppShutdown","A service unavailable error occurred (an HTTP error 503). The service is not available because the application shut down automatically in response to administrator policy.")
-        $ReasonPhrase.Add("BadRequest","A parse error occurred while processing a request.")
-        $ReasonPhrase.Add("Client_Reset","The connection between the client and the server was closed before the request could be assigned to a worker process. The most common cause of this behavior is that the client prematurely closes its connection to the server.")
-        $ReasonPhrase.Add("Connection_Abandoned_By_AppPool","A worker process from the application pool has quit unexpectedly or orphaned a pending request by closing its handle.")
-        $ReasonPhrase.Add("Connection_Abandoned_By_ReqQueue","A worker process from the application pool has quit unexpectedly or orphaned a pending request by closing its handle. Specific to Windows Vista and later versions and to Windows Server 2008 and later versions.")
-        $ReasonPhrase.Add("Connection_Dropped","The connection between the client and the server was closed before the server could send its final response packet. The most common cause of this behavior is that the client prematurely closes its connection to the server.")
-        $ReasonPhrase.Add("Connection_Dropped_List_Full","The list of dropped connections between clients and the server is full. Specific to Windows Vista and later versions and to Windows Server 2008 and later versions.")
-        $ReasonPhrase.Add("ConnLimit","A service unavailable error occurred (an HTTP error 503). The service is not available because the site level connection limit has been reached or exceeded.")
-        $ReasonPhrase.Add("Connections_Refused","The kernel NonPagedPool memory has dropped below 20MB and http.sys has stopped receiving new connections")
-        $ReasonPhrase.Add("Disabled","A service unavailable error occurred (an HTTP error 503). The service is not available because an administrator has taken the application offline.")
-        $ReasonPhrase.Add("EntityTooLarge","An entity exceeded the maximum size that is permitted.")
-        $ReasonPhrase.Add("FieldLength","A field length limit was exceeded.")
-        $ReasonPhrase.Add("Forbidden","A forbidden element or sequence was encountered while parsing.")
-        $ReasonPhrase.Add("Header","A parse error occurred in a header.")
-        $ReasonPhrase.Add("Hostname","A parse error occurred while processing a Hostname.")
-        $ReasonPhrase.Add("Internal","An internal server error occurred (an HTTP error 500).")
-        $ReasonPhrase.Add("Invalid_CR/LF","An illegal carriage return or line feed occurred.")
-        $ReasonPhrase.Add("LengthRequired","A required length value was missing.")
-        $ReasonPhrase.Add("N/A","A service unavailable error occurred (an HTTP error 503). The service is not available because an internal error (such as a memory allocation failure or URL Reservation List conflict) occurred.")
-        $ReasonPhrase.Add("N/I","A not-implemented error occurred (an HTTP error 501), or a service unavailable error occurred (an HTTP error 503) because of an unknown transfer encoding.")
-        $ReasonPhrase.Add("Number","A parse error occurred while processing a number.")
-        $ReasonPhrase.Add("Precondition","A required precondition was missing.")
-        $ReasonPhrase.Add("QueueFull","A service unavailable error occurred (an HTTP error 503). The service is not available because the application request queue is full.")
-        $ReasonPhrase.Add("RequestLength","A request length limit was exceeded.")
-        $ReasonPhrase.Add("Timer_AppPool","The connection expired because a request waited too long in an application pool queue for a server application to de-queue and process it. This time-out duration is <b>ConnectionTimeout</b>. By default, this value is set to two minutes.")
-        $ReasonPhrase.Add("Timer_ConnectionIdle","The connection expired and remains idle. The default <b>ConnectionTimeout</b> duration is two minutes.")
-        $ReasonPhrase.Add("Timer_EntityBody","The connection expired before the request entity body arrived. When a request clearly has an entity body, the HTTP API turns on the <b>Timer_EntityBody</b> timer. At first, the limit of this timer is set to the <b>ConnectionTimeout</b> value (typically, two minutes). Every time that another data indication is received on this request, the HTTP API resets the timer to give the connection two more minutes (or whatever is specified in <b>ConnectionTimeout</b>).")
-        $ReasonPhrase.Add("Timer_HeaderWait","The connection expired because the header parsing for a request took more time than the default limit of two minutes.")
-        $ReasonPhrase.Add("Timer_MinBytesPerSecond","The connection expired because the client was not receiving a response at a reasonable speed. The response send rate was slower than the default of 240 bytes/sec. This can be controlled with the <b>MinFileBytesPerSec</b> metabase property.")
-        $ReasonPhrase.Add("Timer_ReqQueue","The connection expired because a request waited too long in an application pool queue for a server application to de-queue. This time-out duration is <b>ConnectionTimeout</b>. By default, this value is set to two minutes. Specific to Windows Vista and later versions and to Windows Server 2008 and later versions.")
-        $ReasonPhrase.Add("Timer_Response","Reserved. Currently not used.")
-        $ReasonPhrase.Add("Timer_SslRenegotiation","The connection expired because SSL renegotiation between the client and server took longer than the default time-out of two minutes.")
-        $ReasonPhrase.Add("URL","A parse error occurred while processing a URL.")
-        $ReasonPhrase.Add("URL_Length","A URL exceeded the maximum permitted  size.")
-        $ReasonPhrase.Add("Verb","A parse error occurred while processing a verb.")
-        $ReasonPhrase.Add("Version_N/S","A version-not-supported error occurred (an HTTP error 505). ")
 
         $TestDataFullPath = "$env:SystemDrive\Inetpub\TestWebSiteTempData"
         $userAgentRoot = "Test-WebSite"
@@ -329,6 +288,7 @@ param(
         Function Install-OptionalTools
         {
             Get-WinFeatures
+            Install-IISFeature -name IIS-HttpErrors
             Install-IISFeature -name IIS-HttpLogging
             Install-IISFeature -name IIS-HttpTracing 
         }
@@ -888,7 +848,24 @@ param(
                 }   
                 else
                 {
-                    Publish-Warning -text "Short response, but not from Microsoft-HTTPAPI/2.0, what can it be?"
+                    If ($html.Length -eq 0)
+                    {
+                        Publish-Warning -text "The Error Page is empty."
+                        if ((Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST'  -filter "system.webServer/globalModules/add" -name . | ? Name -eq CustomErrorModule).count -eq 0)
+                        {
+                             Publish-Warning -text "The Custom Error Module is not installed, it is highly recommended to install it."
+                        }    
+                        else
+                        {
+                             Publish-Warning -text "The Custom Error Module is installed, but did not return an error page. This indicates something is wrong with your error page setup."
+                        }
+                        return                    
+                    }
+                    else
+                    {
+                        Publish-Warning -text "Short response, but not from Microsoft-HTTPAPI/2.0, what can it be?"
+                        return
+                    }
                 }             
             }
             else
@@ -1308,7 +1285,46 @@ param(
                    Publish-Text -text "No errors found in the application event log in the last $($pastSeconds ) seconds"
                 }
 
-                #Write-Output $script:FailedRequest.Html
+                # taken from: https://support2.microsoft.com/default.aspx?scid=kb;en-us;820729
+                $ReasonPhrase = New-Object 'System.Collections.Generic.dictionary[string,string]'
+                $ReasonPhrase.Add("AppOffline","A service unavailable error occurred (an HTTP error 503). The service is not available because application errors caused the application to be taken offline.")
+                $ReasonPhrase.Add("AppPoolTimer","A service unavailable error occurred (an HTTP error 503). The service is not available because the application pool process is too busy to handle the request.")
+                $ReasonPhrase.Add("AppShutdown","A service unavailable error occurred (an HTTP error 503). The service is not available because the application shut down automatically in response to administrator policy.")
+                $ReasonPhrase.Add("BadRequest","A parse error occurred while processing a request.")
+                $ReasonPhrase.Add("Client_Reset","The connection between the client and the server was closed before the request could be assigned to a worker process. The most common cause of this behavior is that the client prematurely closes its connection to the server.")
+                $ReasonPhrase.Add("Connection_Abandoned_By_AppPool","A worker process from the application pool has quit unexpectedly or orphaned a pending request by closing its handle.")
+                $ReasonPhrase.Add("Connection_Abandoned_By_ReqQueue","A worker process from the application pool has quit unexpectedly or orphaned a pending request by closing its handle. Specific to Windows Vista and later versions and to Windows Server 2008 and later versions.")
+                $ReasonPhrase.Add("Connection_Dropped","The connection between the client and the server was closed before the server could send its final response packet. The most common cause of this behavior is that the client prematurely closes its connection to the server.")
+                $ReasonPhrase.Add("Connection_Dropped_List_Full","The list of dropped connections between clients and the server is full. Specific to Windows Vista and later versions and to Windows Server 2008 and later versions.")
+                $ReasonPhrase.Add("ConnLimit","A service unavailable error occurred (an HTTP error 503). The service is not available because the site level connection limit has been reached or exceeded.")
+                $ReasonPhrase.Add("Connections_Refused","The kernel NonPagedPool memory has dropped below 20MB and http.sys has stopped receiving new connections")
+                $ReasonPhrase.Add("Disabled","A service unavailable error occurred (an HTTP error 503). The service is not available because an administrator has taken the application offline.")
+                $ReasonPhrase.Add("EntityTooLarge","An entity exceeded the maximum size that is permitted.")
+                $ReasonPhrase.Add("FieldLength","A field length limit was exceeded.")
+                $ReasonPhrase.Add("Forbidden","A forbidden element or sequence was encountered while parsing.")
+                $ReasonPhrase.Add("Header","A parse error occurred in a header.")
+                $ReasonPhrase.Add("Hostname","A parse error occurred while processing a Hostname.")
+                $ReasonPhrase.Add("Internal","An internal server error occurred (an HTTP error 500).")
+                $ReasonPhrase.Add("Invalid_CR/LF","An illegal carriage return or line feed occurred.")
+                $ReasonPhrase.Add("LengthRequired","A required length value was missing.")
+                $ReasonPhrase.Add("N/A","A service unavailable error occurred (an HTTP error 503). The service is not available because an internal error (such as a memory allocation failure or URL Reservation List conflict) occurred.")
+                $ReasonPhrase.Add("N/I","A not-implemented error occurred (an HTTP error 501), or a service unavailable error occurred (an HTTP error 503) because of an unknown transfer encoding.")
+                $ReasonPhrase.Add("Number","A parse error occurred while processing a number.")
+                $ReasonPhrase.Add("Precondition","A required precondition was missing.")
+                $ReasonPhrase.Add("QueueFull","A service unavailable error occurred (an HTTP error 503). The service is not available because the application request queue is full.")
+                $ReasonPhrase.Add("RequestLength","A request length limit was exceeded.")
+                $ReasonPhrase.Add("Timer_AppPool","The connection expired because a request waited too long in an application pool queue for a server application to de-queue and process it. This time-out duration is <b>ConnectionTimeout</b>. By default, this value is set to two minutes.")
+                $ReasonPhrase.Add("Timer_ConnectionIdle","The connection expired and remains idle. The default <b>ConnectionTimeout</b> duration is two minutes.")
+                $ReasonPhrase.Add("Timer_EntityBody","The connection expired before the request entity body arrived. When a request clearly has an entity body, the HTTP API turns on the <b>Timer_EntityBody</b> timer. At first, the limit of this timer is set to the <b>ConnectionTimeout</b> value (typically, two minutes). Every time that another data indication is received on this request, the HTTP API resets the timer to give the connection two more minutes (or whatever is specified in <b>ConnectionTimeout</b>).")
+                $ReasonPhrase.Add("Timer_HeaderWait","The connection expired because the header parsing for a request took more time than the default limit of two minutes.")
+                $ReasonPhrase.Add("Timer_MinBytesPerSecond","The connection expired because the client was not receiving a response at a reasonable speed. The response send rate was slower than the default of 240 bytes/sec. This can be controlled with the <b>MinFileBytesPerSec</b> metabase property.")
+                $ReasonPhrase.Add("Timer_ReqQueue","The connection expired because a request waited too long in an application pool queue for a server application to de-queue. This time-out duration is <b>ConnectionTimeout</b>. By default, this value is set to two minutes. Specific to Windows Vista and later versions and to Windows Server 2008 and later versions.")
+                $ReasonPhrase.Add("Timer_Response","Reserved. Currently not used.")
+                $ReasonPhrase.Add("Timer_SslRenegotiation","The connection expired because SSL renegotiation between the client and server took longer than the default time-out of two minutes.")
+                $ReasonPhrase.Add("URL","A parse error occurred while processing a URL.")
+                $ReasonPhrase.Add("URL_Length","A URL exceeded the maximum permitted  size.")
+                $ReasonPhrase.Add("Verb","A parse error occurred while processing a verb.")
+                $ReasonPhrase.Add("Version_N/S","A version-not-supported error occurred (an HTTP error 505). ")
                                  
                 # get the ReasonPhrase from the last line of the httperr.log                        
                 $lastKnowProblem = [regex]::match($script:FailedRequest.Html,' 503 \d+ ([\w\/_]+) ').Groups[1].Value
@@ -1378,7 +1394,11 @@ param(
         }
         
         Check-RequiredPrerequisites
-        if ($install) {Install-OptionalTools}
+        if ($install) 
+        {
+            Install-OptionalTools
+            Exit $ExitSuccess
+        }
 
         Import-Module WebAdministration -Verbose:$false 
 
