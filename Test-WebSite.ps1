@@ -902,10 +902,19 @@ param(
                 }                                                             
 
                 $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d{3}.(\d{1,3})').Groups[1].Value
+
+                Publish-Verbose -text "Discovered a sub-status of $($script:FailedRequest.SubStatus)"
+
                 if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
                 {
                      $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
                 }
+                elseif ( ($xml.html.body.div.div[1].fieldset.div.table.tr).count -gt 2)
+                {
+                     $script:FailedRequest.Win32 = $xml.html.body.div.div[1].fieldset.div.table.tr[3].td
+                }
+                
+                Publish-Verbose -text "Discovered a win32-status of $($script:FailedRequest.Win32)"
             }
             
             # we could get other information from the page
@@ -1073,6 +1082,76 @@ param(
             }
         }
 
+        Function Get-VirtualDirectoryUser($siteName,$Resource)
+        {
+            # each virtual directory including the root can have its own username which determines access permissions
+
+            $vPath = ""
+            $vUser = ""
+            $vLen = -1
+
+           Get-WebConfiguration -pspath 'MACHINE/WEBROOT/APPHOST' -filter "system.applicationHost/sites/site[@name='$($siteName)']/application" | ForEach-Object {
+                $AppPath = $_.Path
+                Get-WebConfiguration -pspath 'MACHINE/WEBROOT/APPHOST' -filter "system.applicationHost/sites/site[@name='$($siteName)']/application[@Path='$($_.Path)']/virtualDirectory" | ForEach-Object {
+                    $fullPath = $AppPath + $_.Path
+                    $fullPath = $fullPath -replace "\/\/","/"
+                    if (!($fullPath.EndsWith("/")))
+                    {
+                        $fullPath += "/"
+                    }
+
+                    $pattern = "^$fullPath"
+
+                    if ($Resource -match $pattern)
+                    {
+                        if ($fullPath.Length -gt $vLen)
+                        {
+                            $vLen = $fullPath.Length 
+                            $vPath = $fullPath
+                            $vUser = $_.UserName
+                        }
+                   
+                    }                                  
+                }                                                               
+            }
+
+            return $vUser
+        }
+
+        Function Repair-Permission([string]$potentialResource,$site,$webRoot,$pool,$AppProcessmodel)
+        {
+            If (Test-Path $potentialResource)
+            {
+                Publish-Text -text "Here are the permissions for file: $potentialResource"
+                (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
+                # show the user running the pool
+                # suggest acl change to fix this problem
+                    
+                if ($AppProcessmodel.identityType -eq "ApplicationPoolIdentity")
+                {
+                    Publish-Text -text "`r`nThe Application pool is running under: `"IIS APPPOOL\$($pool.name)`""
+                }
+                else
+                {
+                    Publish-Text -text "The Application pool is running under: $($AppProcessmodel.identityType)"
+                }   
+                    
+                Publish-Text -text ""       
+                    
+                if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
+                {
+                    Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " -intro "You may want to give read access to IIS_IUSRS"
+                    Show-PoshCommand -info "& icacls.exe `"$webRoot`" /T /grant `"BUILTIN\IIS_IUSRS:(OI)(CI)(RX)`" " -intro "Or better, set read permission for the webroot to IIS_IUSRS"
+                }  
+                else
+                {                        
+                    Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"IUSR:RX`" " -intro "You may want to give read access to IUSR"
+                    Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant /T `"IUSR:(OI)(CI)(RX)`" " -intro "Or give read access to IUSR for the whole webroot folder"
+                    Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" -intro "Or use the ApplicationPoolIdentity as user for anonymous access" 
+                }                                                  
+            }            
+        }
+
         Function Process-Problem
         {
             [OutputType([int])]
@@ -1084,6 +1163,7 @@ param(
 
             $fullStatus = "$($script:FailedRequest.Status).$($script:FailedRequest.SubStatus)"
             Publish-FailureText -text "$($script:FailedRequest.Url) - $fullStatus - Win32: $($script:FailedRequest.Win32)"
+           
 
             if ($statusInfo.ContainsKey($fullStatus))
             {
@@ -1253,14 +1333,23 @@ param(
             }
             elseif ($fullStatus -eq "500.19")
             {             
-                if ($win32Status -eq 5)
+                if ($($script:FailedRequest.Win32) -eq 5)
                 {
                     Publish-Text -text "Set permissions on web.config"
                 } 
-                elseif ($win32Status -eq 50)
+                elseif ($($script:FailedRequest.Win32) -eq 50)
                 {
                     Publish-Text -text "Problem with the Configuration"
                 }  
+                elseif ($($script:FailedRequest.Win32) -eq "0x80070005")
+                {
+                    Publish-Text -text "Problem with the permissions of Configuration"
+                    Repair-Permission -PotentialResource $potentialResource -site $site -webRoot $webRoot -pool $pool -AppProcessmodel $AppProcessmodel
+                }
+                else
+                {
+                    Publish-Text -text "$($script:FailedRequest.Win32) - Please check: https://support.microsoft.com/en-us/kb/942055"
+                }
             }
             elseif ($fullStatus -eq "503.0")
             {             
@@ -1475,6 +1564,8 @@ param(
         Test-WebConfig -webRoot $webRoot
 
         $script:RequestStart = Get-Date
+
+      #  Get-VirtualDirectoryUser -siteName $site.Name -Resource $Resource
              
         $url = Get-Url -site $site -resource $Resource
         $status = Test-WebPage -url $url
