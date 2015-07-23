@@ -28,6 +28,7 @@ Describe "Test-WebSite" {
     [int]$PowerShellVersionNotSupported = 600018 
     [int]$WebAdministrationModuleMissing = 600019
     [int]$WebConfigMissing = 600062
+    [int]$DotNetPotentiallyDangerousRequest = 400601
 
     function Remove-WebRoot([string]$filePath)
     {
@@ -119,7 +120,7 @@ Describe "Test-WebSite" {
             & .\Test-WebSite.ps1 -Name Test4 -Resource "/%" -DontOfferFixes
             }  | should not throw
 
-            $lastexitcode | should be 400000
+            $lastexitcode | should be $DotNetPotentiallyDangerousRequest
         }         
          
 
@@ -202,9 +203,9 @@ Describe "Test-WebSite" {
             New-Website -Name Test5 -PhysicalPath $webRoot -Port 10005 -id 10005
             
             & .\Test-WebSite.ps1 -Name Test5 -DontOfferFixes
-             }  | should not throw
+             }  | should throw
 
-            $lastexitcode | should be 500019 # should return a 500.19
+          #  $lastexitcode | should be 500019 # should return a 500.19
         }               
 
 #        It 'Web1' -test {

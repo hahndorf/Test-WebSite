@@ -159,6 +159,10 @@ param(
         [int]$PowerShellVersionNotSupported = 600018 
         [int]$WebAdministrationModuleMissing = 600019
         [int]$WebConfigMissing = 600062  
+        [int]$DotNetPotentiallyDangerousRequest = 400601
+
+        # our own sub-status codes
+        [int]$subDotNetException = 601
       
         # Infrastucture functions
 
@@ -523,14 +527,18 @@ param(
 
             Publish-Text -text ((Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited | Format-Table -AutoSize | out-string).Trim()
 
-            $virDirs = Get-WebVirtualDirectory -site "$($site.name)"
+            $virDirs = Get-VirtualDirectory -siteName "$($site.name)" 
 
-            if ($virDirs.count -gt 0)
-            {
-                Print-SectionHeader "Virtual Directories"
-                Publish-Text -text ($virDirs | Format-Table -Property Path,PhysicalPath,AllowSubDirConfig,UserName  -AutoSize | Out-String).Trim()
+            Print-SectionHeader "Directories"
+            if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent)
+            {         
+                Publish-Text -text ($virDirs | Format-List -Property FullPath,PhysicalPath,AppPath, AllowSubDirConfig,UserName,LogonMethod | Out-String).Trim()
             }
-
+            else
+            {
+                Publish-Text -text ($virDirs | Format-Table -Property FullPath,PhysicalPath,UserName  -AutoSize | Out-String).Trim()
+            }
+                        
             $apps = Get-WebApplication -site "$($site.name)"
             
             if ($apps.count -gt 0)
@@ -888,8 +896,33 @@ param(
                 }
                 catch [System.Management.Automation.PSInvalidCastException]
                 {
-                    Publish-Verbose -text "Returning html is not valid XML:" 
-                    return
+                    Publish-Verbose -text "Returning html is not valid XML." 
+
+                    if ([regex]::ismatch($html, "Microsoft .NET Framework Version", "IgnoreCase"))
+                    {
+                        Publish-Verbose -text "Microsoft .NET Framework Error Page (White-Yellow page of death)"                        
+                        $script:FailedRequest.SubStatus = $subDotNetException
+                        $script:FailedRequest.Win32 = [regex]::matches($html, "\((0x\d+)\):", "IgnoreCase").Groups[1].Value
+                        $script:FailedRequest.Processed = $true
+                        $script:FailedRequest.Information = [regex]::matches($html, "<h2> <i>(.+)</i> </h2>", "IgnoreCase").Groups[1].Value
+
+                        $stackTrace = [regex]::matches($html, "<!--(.+)-->", "Singleline").Groups[1].Value
+                        $stackTrace = $stackTrace -replace "&#39;","'"
+                        if ($stackTrace -ne "")
+                        {
+                            $script:FailedRequest.Information = $stackTrace
+                        }
+                    }
+                    else
+                    {
+                        return
+                    }
+
+                    
+
+                    #  Version
+
+                    
                 }
                 catch [System.Net.WebException],[System.Exception]
                 {
@@ -899,21 +932,24 @@ param(
                 }
                 finally
                 {
-                }                                                             
-
-                $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d{3}.(\d{1,3})').Groups[1].Value
-
-                Publish-Verbose -text "Discovered a sub-status of $($script:FailedRequest.SubStatus)"
-
-                if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
-                {
-                     $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
-                }
-                elseif ( ($xml.html.body.div.div[1].fieldset.div.table.tr).count -gt 2)
-                {
-                     $script:FailedRequest.Win32 = $xml.html.body.div.div[1].fieldset.div.table.tr[3].td
-                }
+                }         
                 
+                if (!($script:FailedRequest.Processed))
+                {                                                    
+                    $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d{3}.(\d{1,3})').Groups[1].Value
+
+                    Publish-Verbose -text "Discovered a sub-status of $($script:FailedRequest.SubStatus)"
+
+                    if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
+                    {
+                         $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
+                    }
+                    elseif ( ($xml.html.body.div.div[1].fieldset.div.table.tr).count -gt 2)
+                    {
+                         $script:FailedRequest.Win32 = $xml.html.body.div.div[1].fieldset.div.table.tr[3].td
+                    }
+                }
+
                 Publish-Verbose -text "Discovered a win32-status of $($script:FailedRequest.Win32)"
             }
             
@@ -991,7 +1027,7 @@ param(
 
             if(!($lineFound))
             {
-                WPublish-Text -text "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
+                Publish-Text -text "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
             }                         
         }
        
@@ -1056,7 +1092,10 @@ param(
                               Publish-Text "$caption`: $($resp.Headers[$HeaderKey])";
                         }
 
-                        Write-Debug "$result"
+                        if ($PSCmdlet.MyInvocation.BoundParameters["Debug"].IsPresent)
+                        {
+                             Publish-Text "$result" 
+                        }
                     }
 
                     # store the result in a global object
@@ -1071,6 +1110,7 @@ param(
                         Server = $resp.Headers["Server"] 
                         ContentLength = $resp.Headers["Content-Length"] 
                         ContentType = $resp.Headers["Content-Type"]
+                        Information = ""
                         }      
                     
                     return [int]$resp.StatusCode                
@@ -1082,15 +1122,13 @@ param(
             }
         }
 
-        Function Get-VirtualDirectoryUser($siteName,$Resource)
+        Function Get-VirtualDirectory($siteName)
         {
             # each virtual directory including the root can have its own username which determines access permissions
 
-            $vPath = ""
-            $vUser = ""
-            $vLen = -1
+            $VDirs = @()
 
-           Get-WebConfiguration -pspath 'MACHINE/WEBROOT/APPHOST' -filter "system.applicationHost/sites/site[@name='$($siteName)']/application" | ForEach-Object {
+            Get-WebConfiguration -pspath 'MACHINE/WEBROOT/APPHOST' -filter "system.applicationHost/sites/site[@name='$($siteName)']/application" | ForEach-Object {
                 $AppPath = $_.Path
                 Get-WebConfiguration -pspath 'MACHINE/WEBROOT/APPHOST' -filter "system.applicationHost/sites/site[@name='$($siteName)']/application[@Path='$($_.Path)']/virtualDirectory" | ForEach-Object {
                     $fullPath = $AppPath + $_.Path
@@ -1099,23 +1137,60 @@ param(
                     {
                         $fullPath += "/"
                     }
-
-                    $pattern = "^$fullPath"
-
-                    if ($Resource -match $pattern)
-                    {
-                        if ($fullPath.Length -gt $vLen)
-                        {
-                            $vLen = $fullPath.Length 
-                            $vPath = $fullPath
-                            $vUser = $_.UserName
-                        }
-                   
-                    }                                  
+        
+                    $vDir = New-Object psobject -Property @{
+                        FullPath = $fullPath
+                        PhysicalPath = [System.Environment]::ExpandEnvironmentVariables($_.physicalPath)
+                        UserName = $_.userName
+                        LogonMethod = $_.LogonMethod
+                        AllowSubDirConfig = $_.AllowSubDirConfig
+                        AppPath = $AppPath
+                    }
+        
+                    $VDirs += $vDir                          
                 }                                                               
             }
 
-            return $vUser
+            return $VDirs
+
+           # Get-VirtualDirectory -siteName "Default Web Site" | Format-Table -Property FullPath,PhysicalPath,AllowSubDirConfig,UserName, LogonMethod  -AutoSize
+
+        }
+
+        Function Get-ExecutingDirectory($siteName,$Resource)
+        {
+            # each virtual directory including the root can have its own username which determines access permissions
+
+            $vLen = -1
+            $Resource2 = $Resource + "/"
+
+            $dir = $null
+
+            # we are trying to find the best matching directory for the request
+            Get-VirtualDirectory -siteName $siteName | ForEach-Object {
+
+                $pattern = "^$($_.FullPath)"
+
+                if ($Resource -match $pattern -or $Resource2 -match $pattern)
+                {
+                    if ($_.FullPath.Length -gt $vLen)
+                    {
+                        $dir = $_
+                        $vLen = $_.FullPath.Length 
+                    }                   
+                }  
+            }
+
+            if ($vLen -eq -1)
+            {
+                Publish-Warning "No matching directory found for request '$($Resource)'"
+            }
+            else
+            {
+                Publish-Verbose "Found directory '$($dir.FullPath)' for request '$($Resource)'"
+            }
+
+            return $dir
         }
 
         Function Repair-Permission([string]$potentialResource,$site,$webRoot,$pool,$AppProcessmodel)
@@ -1183,9 +1258,41 @@ param(
             $potentialResource = Join-Path $webRoot $res
 
             Publish-Verbose -Text "Physical Resource: $potentialResource"
+            $dir = Get-ExecutingDirectory -siteName $site.Name -Resource $Resource      
+            Publish-Verbose -Text "Directory: '$($dir.FullPath)'"      
 
             $AppProcessmodel = ($pool | Select -ExpandProperty processmodel)
             $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+
+            $userAccount = ""
+
+            $siteUser = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location "$($site.Name)" -filter "system.webServer/security/authentication/anonymousAuthentication[@enabled='true']" -name "userName").value           
+
+            if ($dir.UserName -ne "")
+            {
+                $userAccount = $dir.UserName
+            }
+            elseif ($siteUser -ne $null -and $siteUser -ne "")
+            {
+                $userAccount = $siteUser
+            }
+            else
+            {                 
+                if ($AppProcessmodel.identityType -eq "ApplicationPoolIdentity")
+                {
+                    $userAccount = "IIS APPPOOL\$($pool.name)"
+                }
+                else
+                {
+                    $userAccount  = "$($AppProcessmodel.identityType)"
+                }
+            }
+            if ($userAccount -notmatch "\\")
+            {
+                $userAccount = $env:COMPUTERNAME + "\" + $userAccount
+            }
+
+            Publish-Verbose -text "User-Account used for this request: '$($userAccount)'"
 
             try
             {
@@ -1330,6 +1437,12 @@ param(
                 }                        
                 Publish-Text -text "Check both the site and the server level."                       
 
+            }
+            elseif ($fullStatus -eq $("500." + $subDotNetException))
+            {
+                Publish-Text -text "Fix this .NET Exception"
+                Publish-Text -text "Code: $($script:FailedRequest.Win32)"
+                Publish-Text -text $script:FailedRequest.Information
             }
             elseif ($fullStatus -eq "500.19")
             {             
@@ -1564,8 +1677,6 @@ param(
         Test-WebConfig -webRoot $webRoot
 
         $script:RequestStart = Get-Date
-
-      #  Get-VirtualDirectoryUser -siteName $site.Name -Resource $Resource
              
         $url = Get-Url -site $site -resource $Resource
         $status = Test-WebPage -url $url
