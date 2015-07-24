@@ -158,7 +158,8 @@ param(
         [int]$WebSiteNotFound = 600015 
         [int]$PowerShellVersionNotSupported = 600018 
         [int]$WebAdministrationModuleMissing = 600019
-        [int]$WebConfigMissing = 600062  
+        [int]$WebConfigMissing = 600062 
+        [int]$WebConfigInvalid = 600063
         [int]$DotNetPotentiallyDangerousRequest = 400601
 
         # our own sub-status codes
@@ -791,7 +792,7 @@ param(
 
         }
 
-        Function Test-WebConfig([string]$webRoot)
+        Function Test-WebConfig([string]$webRoot,[string]$name)
         {
             $webConfig = Join-Path $webRoot "web.config"
 
@@ -816,7 +817,17 @@ param(
             }
             else
             {
-                Show-TestSuccess -info "Configuration `"$webConfig`" exists"   
+                try
+                {
+                    Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location "$name" -filter "system.webServer" -name . | Out-Null
+                }
+                catch [System.Exception]
+                {
+                    Publish-Warning -text "Web.Config has a problem"
+                    Publish-Text -text "$_"
+                    Exit $WebConfigInvalid
+                }
+                Show-TestSuccess -info "Configuration `"$webConfig`" exists and looks fine"   
             }                     
         }
 
@@ -1651,6 +1662,9 @@ param(
 
         Show-TestSuccess -info "WebSite: `"$name`" is running"
 
+        $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+        Test-WebConfig -webRoot $webRoot -name $name
+
         $poolName = $site.applicationPool
 
         $pool = Get-Item IIS:\\AppPools\$poolName
@@ -1672,9 +1686,7 @@ param(
             Exit $AppPoolNotRunning
         }
         
-        $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
-        Test-WebConfig -webRoot $webRoot
 
         $script:RequestStart = Get-Date
              
