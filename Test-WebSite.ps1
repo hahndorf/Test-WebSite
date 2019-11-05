@@ -214,7 +214,7 @@ param(
             Write-Host "Checking installed Windows features..."
             $tempFile = "$env:temp\TestWindowsFeature.log"
             & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
-            $Script:WinFeatures = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.State -eq "Enabled "}) | Select Name
+            $Script:WinFeatures = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.State -eq "Enabled "}) | Select-Object Name
             Remove-Item -Path $tempFile            
         }
 
@@ -446,8 +446,7 @@ param(
             Print-SectionHeader "Operating System:"
 
             $OSInfo = Get-WmiObject -Class Win32_OperatingSystem
-          #  $OSInfo = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
-            $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+           # $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
             Print-Attribute "Caption" $($OSInfo.Caption)
             Print-Attribute "Version" $($OSInfo.Version)
@@ -473,17 +472,17 @@ param(
             Print-SubHeader "Installed IIS Components"
 
             # works in 6.2 and newer only
-            # Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS-" -and $_.State -eq "Enabled"} | Sort FeatureName | Select FeatureName | Format-Table -HideTableHeaders
+            # Get-WindowsOptionalFeature -Online | Where {$_.FeatureName -match "^IIS-" -and $_.State -eq "Enabled"} | Sort FeatureName | Select FeatureName | Format-Table -HideTableHeaders
 
             # the following works in Win7/2008R2 and newer           
             $tempFile = "$env:temp\TestWindowsFeature.log"
             & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
-            Publish-Text -text (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()
+            Publish-Text -text (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort-Object Name | Select-Object Name | Format-Table -HideTableHeaders | Out-String).Trim()
             Remove-Item -Path $tempFile -Force
 
             Print-SubHeader "Global Modules"
             
-            Publish-Text -text ((Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()     
+            Publish-Text -text ((Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select-Object Name | Format-Table -HideTableHeaders | Out-String).Trim()     
         }
 
         Function Show-SiteInfo($site,$pool)
@@ -497,9 +496,9 @@ param(
             
             Print-SubHeader "Bindings"
 
-            Publish-Text -text (($site | Select -expandproperty bindings).collection | format-table -AutoSize | Out-String).Trim()
+            Publish-Text -text (($site | Select-Object -expandproperty bindings).collection | format-table -AutoSize | Out-String).Trim()
             
-            $limits = ($site | Select -expandproperty limits).collection
+            $limits = ($site | Select-Object -expandproperty limits).collection
             if ($limits.count -gt 0)
             {
                 Print-SubHeader "Limits"
@@ -507,17 +506,17 @@ param(
             }
 
             Print-SubHeader "Default Documents"
-            Publish-Text -text (Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | Format-Table -HideTableHeaders  | Out-String).Trim()
+            Publish-Text -text (Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select-Object value | Format-Table -HideTableHeaders  | Out-String).Trim()
 
             Print-SubHeader "Error Pages"
             Publish-Text -text (Get-WebConfiguration "system.webserver/httpErrors" "IIS:\sites\$($site.name)" | Format-Table -Property ErrorMode,existingResponse,defaultResponseMode  -AutoSize | Out-String).Trim()
 
             Print-SubHeader "Authentication"
-            Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\$($site.Name)" | Sort-Object SectionPath | foreach{
+            Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\$($site.Name)" | Sort-Object SectionPath | ForEach-Object{
                  Publish-Text -text ""
                  Publish-Text -text $($_.SectionPath -replace "/system.webServer/security/authentication/","")
                  Publish-Text -text ""
-                 Publish-Text -text ($_ | select -expandproperty attributes | Where {$_.Name -ne "password"} | Select Name,Value | Format-Table -AutoSize | out-string).Trim()
+                 Publish-Text -text ($_ | Select-Object -expandproperty attributes | Where-Object {$_.Name -ne "password"} | Select-Object Name,Value | Format-Table -AutoSize | out-string).Trim()
             }
 
             Show-PoolInfo $pool
@@ -526,7 +525,7 @@ param(
 
             Print-SubHeader "Folder permissions for $webRoot"
 
-            Publish-Text -text ((Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited | Format-Table -AutoSize | out-string).Trim()
+            Publish-Text -text ((Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select-Object IdentityReference, FileSystemRights, AccessControlType, IsInherited | Format-Table -AutoSize | out-string).Trim()
 
             $virDirs = Get-VirtualDirectory -siteName "$($site.name)" 
 
@@ -545,7 +544,7 @@ param(
             if ($apps.count -gt 0)
             {
                 Print-SectionHeader "Applications"
-                Publish-Text -text ($apps | Select Path,PhysicalPath,applicationPool | Format-Table -AutoSize | Out-String).Trim()
+                Publish-Text -text ($apps | Select-Object Path,PhysicalPath,applicationPool | Format-Table -AutoSize | Out-String).Trim()
             }
          }
 
@@ -561,7 +560,7 @@ param(
             
             Print-Attribute "startMode" $($pool.startMode)
 
-            $pm = $pool | select -expandproperty processModel
+            $pm = $pool | Select-Object -expandproperty processModel
 
             Print-Attribute "identityType" $pm.identityType
             Print-Attribute "userName" $pm.userName
@@ -573,13 +572,13 @@ param(
 
         Function Show-Site([string]$name)
         {
-            $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq "$name"}
+            $site = Get-ChildItem iis:\sites\ | Where-Object {$_.name -eq "$name"}
             if ($site -eq $null)
             {
                 Publish-Warning -text "The WebSite `'$name`' could not found"
 
                 Publish-Text "Existing sites on this server:"
-                Get-ChildItem iis:\sites | Select Name | Format-Table -HideTableHeaders -AutoSize
+                Get-ChildItem iis:\sites | Select-Object Name | Format-Table -HideTableHeaders -AutoSize
 
                 Exit $WebSiteNotFound
             }
@@ -767,7 +766,7 @@ param(
         {
             if ([int]$PSVersionTable.PSVersion.Major -lt 30)
             {
-                return (Get-Content $fileName | Where-Object {$_ -notLike $exclude}) | Select -Last $tail
+                return (Get-Content $fileName | Where-Object {$_ -notLike $exclude}) | Select-Object -Last $tail
             }
             else
             {
@@ -825,6 +824,9 @@ param(
                 {
                     Publish-Warning -text "Web.Config has a problem"
                     Publish-Text -text "$_"
+                    Publish-Text -text "Check `'$webConfig`' for any XML errors."
+                    Publish-Text -text "Also make sure any extensions that may be configured in the web.config are installed on the server."
+                    Publish-Text -text "A common problem is to have a 'rewrite' node in the web.config without having the Rewrite Module installed on the server"
                     Exit $WebConfigInvalid
                 }
                 Show-TestSuccess -info "Configuration `"$webConfig`" exists and looks fine"   
@@ -862,7 +864,7 @@ param(
                             $Log
                         }
                         # store the last line in the html field to be used later
-                        $script:FailedRequest.html = $Log | Select -Last 1
+                        $script:FailedRequest.html = $Log | Select-Object -Last 1
                     }                    
                 }   
                 else
@@ -1000,7 +1002,7 @@ param(
             # we assume the entry we are looking for is the last one, so using -tail 50
             # gives us for few more, just in case.
 
-            $Log = Get-Content $logFileName -Tail 50 | where {$_ -notLike "#[D,S-V]*" }
+            $Log = Get-Content $logFileName -Tail 50 | Where-Object {$_ -notLike "#[D,S-V]*" }
 
             $fields = ""
             $statusColumn = 0
@@ -1209,7 +1211,7 @@ param(
             If (Test-Path $potentialResource)
             {
                 Publish-Text -text "Here are the permissions for file: $potentialResource"
-                (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
+                (Get-ACL $potentialResource).Access | Select-Object IdentityReference, FileSystemRights, AccessControlType, IsInherited
                 # show the user running the pool
                 # suggest acl change to fix this problem
                     
@@ -1272,7 +1274,7 @@ param(
             $dir = Get-ExecutingDirectory -siteName $site.Name -Resource $Resource      
             Publish-Verbose -Text "Directory: '$($dir.FullPath)'"      
 
-            $AppProcessmodel = ($pool | Select -ExpandProperty processmodel)
+            $AppProcessmodel = ($pool | Select-Object -ExpandProperty processmodel)
             $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
             $userAccount = ""
@@ -1307,7 +1309,7 @@ param(
 
             try
             {
-                $defaultDocs = Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value    
+                $defaultDocs = Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select-Object value    
             }
             catch
             {
@@ -1320,7 +1322,7 @@ param(
                 # we could have different default documents in subfolders
                 # for now we just check the default documents for the site
 
-                $defaultDocs | ForEach {
+                $defaultDocs | ForEach-Object {
 
                     $file = (Join-Path $webRoot $res)
                     $file = (Join-Path $file $_.value)
@@ -1338,7 +1340,7 @@ param(
 
             # display content from the IIS error pages
             # there may be more than one language we just pick the random first one
-            $errorPageDir = Get-ChildItem $env:SystemDrive\inetpub\custerr\ | select -First 1
+            $errorPageDir = Get-ChildItem $env:SystemDrive\inetpub\custerr\ | Select-Object -First 1
             # get the full file name for the error page
             $errorPageFile = $script:FailedRequest.Status.ToString() + "-" + $script:FailedRequest.SubStatus.ToString() + ".htm"
             $errorPageFile = Join-Path $errorPageDir.FullName $errorPageFile
@@ -1374,7 +1376,7 @@ param(
                 If (Test-Path $potentialResource)
                 {
                     Publish-Text -text "Here are the permissions for file: $potentialResource"
-                    (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
+                    (Get-ACL $potentialResource).Access | Select-Object IdentityReference, FileSystemRights, AccessControlType, IsInherited
                     # show the user running the pool
                     # suggest acl change to fix this problem
                     
@@ -1389,7 +1391,7 @@ param(
                     
                     Publish-Text -text ""       
                     
-                    if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
+                    if (((Get-ACL "$potentialResource").Access | Where-Object IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
                     {
                         Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " -intro "You may want to give read access to IIS_IUSRS"
                         Show-PoshCommand -info "& icacls.exe `"$webRoot`" /T /grant `"BUILTIN\IIS_IUSRS:(OI)(CI)(RX)`" " -intro "Or better, set read permission for the webroot to IIS_IUSRS"
@@ -1413,7 +1415,7 @@ param(
             elseif ($fullStatus -eq "403.14")
             {
                 Publish-Text -text "Make sure one of the defined default documents is present in the folder: `'$webRoot`'"
-                $defaultDocs | ForEach {
+                $defaultDocs | ForEach-Object {
                     Publish-Text -text " - $($_.value) "
                 }
                 Publish-Text -text "We do not recommend to enable directory browsing"
@@ -1439,7 +1441,7 @@ param(
                 {
                     Publish-Warning -text "All unlisted addresses are NOT allowed"
                 }
-                $ipRe = (Get-WebConfiguration "system.webserver/security/ipsecurity/*" "IIS:\sites\$($site.name)" | Select ipAddress,subnetMask,domainName,allowed | ft -AutoSize | Out-String).Trim()
+                $ipRe = (Get-WebConfiguration "system.webserver/security/ipsecurity/*" "IIS:\sites\$($site.name)" | Select-Object ipAddress,subnetMask,domainName,allowed | ft -AutoSize | Out-String).Trim()
 
                 if ($ipRe -ne $null)
                 {
@@ -1483,7 +1485,7 @@ param(
                 Publish-Text -text "If you are running a custom application, please check the Windows event logs"
 
                 $pastSeconds = 10
-                $time = (Get-Date) – (New-TimeSpan -Minute $pastSeconds)
+                $time = (Get-Date) - (New-TimeSpan -Minute $pastSeconds)
 
                 # never get more than 50 events
                 $errorEvents = Get-WinEvent -MaxEvents 50 -FilterHashtable @{Level=2;logname='application';StartTime=$time}  -Verbose:$false
@@ -1491,7 +1493,7 @@ param(
                 if ($errorEvents.Count -gt 0)
                 {
                   Publish-Warning -text "$($errorEvents.Count) errors found in the application event log in the last $($pastSeconds ) seconds"
-                  Publish-Text -text ($errorEvents | Select TimeCreated, ProviderName, Message | fl)
+                  Publish-Text -text ($errorEvents | Select-Object TimeCreated, ProviderName, Message | Format-List)
                 }
                 else
                 {
@@ -1572,12 +1574,12 @@ param(
 
             if (Test-Path $frebDir)
             {
-                $frebFiles = Get-ChildItem $frebDir -Filter "fr*.xml" | Where LastWriteTime -gt $script:RequestStart.DateTime
+                $frebFiles = Get-ChildItem $frebDir -Filter "fr*.xml" | Where-Object LastWriteTime -gt $script:RequestStart.DateTime
 
                 if ($frebFiles.count -gt 0)
                 {
                     Publish-Text -text "Failed Request Tracing files are available:"
-                    $frebFiles | ForEach {
+                    $frebFiles | ForEach-Object {
                         Publish-Text -text $(Copy-FrebFiles $_.FullName)
                     }
                 }
@@ -1627,7 +1629,7 @@ param(
             Exit $ExitSuccess 
         }
 
-        $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq $name}
+        $site = Get-ChildItem iis:\sites\ | Where-Object {$_.name -eq $name}
 
         if ($site -eq $null)
         {
