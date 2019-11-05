@@ -85,7 +85,8 @@
     Should work with PowerShell 2 on Windows 7 SP1 and anything newer
 
     Author:  Peter Hahndorf
-    Created: July 1, 2015 
+    Created: July 1st, 2015 
+    Updated: November 5th, 2019
     
 .LINK
     https://github.com/hahndorf/Test-WebSite   
@@ -158,7 +159,12 @@ param(
         [int]$WebSiteNotFound = 600015 
         [int]$PowerShellVersionNotSupported = 600018 
         [int]$WebAdministrationModuleMissing = 600019
-        [int]$WebConfigMissing = 600062  
+        [int]$WebConfigMissing = 600062 
+        [int]$WebConfigInvalid = 600063
+        [int]$DotNetPotentiallyDangerousRequest = 400601
+
+        # our own sub-status codes
+        [int]$subDotNetException = 601
       
         # Infrastucture functions
 
@@ -209,7 +215,7 @@ param(
             Write-Host "Checking installed Windows features..."
             $tempFile = "$env:temp\TestWindowsFeature.log"
             & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
-            $Script:WinFeatures = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.State -eq "Enabled "}) | Select Name
+            $Script:WinFeatures = (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.State -eq "Enabled "}) | Select-Object Name
             Remove-Item -Path $tempFile            
         }
 
@@ -441,8 +447,7 @@ param(
             Print-SectionHeader "Operating System:"
 
             $OSInfo = Get-WmiObject -Class Win32_OperatingSystem
-          #  $OSInfo = Get-CimInstance -ClassName Win32_OperatingSystem -Namespace root/cimv2
-            $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+           # $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
             Print-Attribute "Caption" $($OSInfo.Caption)
             Print-Attribute "Version" $($OSInfo.Version)
@@ -468,17 +473,17 @@ param(
             Print-SubHeader "Installed IIS Components"
 
             # works in 6.2 and newer only
-            # Get-WindowsOptionalFeature –Online | Where {$_.FeatureName -match "^IIS-" -and $_.State -eq "Enabled"} | Sort FeatureName | Select FeatureName | Format-Table -HideTableHeaders
+            # Get-WindowsOptionalFeature -Online | Where {$_.FeatureName -match "^IIS-" -and $_.State -eq "Enabled"} | Sort FeatureName | Select FeatureName | Format-Table -HideTableHeaders
 
             # the following works in Win7/2008R2 and newer           
             $tempFile = "$env:temp\TestWindowsFeature.log"
             & dism.exe /online /get-features /format:table | out-file $tempFile -Force       
-            Publish-Text -text (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()
+            Publish-Text -text (Import-CSV -Delim '|' -Path $tempFile -Header Name,state | Where-Object {$_.Name.Trim() -match "^IIS-" -and $_.State.Trim() -eq "Enabled"} | Sort-Object Name | Select-Object Name | Format-Table -HideTableHeaders | Out-String).Trim()
             Remove-Item -Path $tempFile -Force
 
             Print-SubHeader "Global Modules"
             
-            Publish-Text -text ((Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select Name | Format-Table -HideTableHeaders | Out-String).Trim()     
+            Publish-Text -text ((Get-WebConfiguration //globalmodules -PSPath "iis:\").collection | Sort-Object Name | Select-Object Name | Format-Table -HideTableHeaders | Out-String).Trim()     
         }
 
         Function Show-SiteInfo($site,$pool)
@@ -492,9 +497,9 @@ param(
             
             Print-SubHeader "Bindings"
 
-            Publish-Text -text (($site | Select -expandproperty bindings).collection | format-table -AutoSize | Out-String).Trim()
+            Publish-Text -text (($site | Select-Object -expandproperty bindings).collection | format-table -AutoSize | Out-String).Trim()
             
-            $limits = ($site | Select -expandproperty limits).collection
+            $limits = ($site | Select-Object -expandproperty limits).collection
             if ($limits.count -gt 0)
             {
                 Print-SubHeader "Limits"
@@ -502,17 +507,17 @@ param(
             }
 
             Print-SubHeader "Default Documents"
-            Publish-Text -text (Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value | Format-Table -HideTableHeaders  | Out-String).Trim()
+            Publish-Text -text (Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select-Object value | Format-Table -HideTableHeaders  | Out-String).Trim()
 
             Print-SubHeader "Error Pages"
             Publish-Text -text (Get-WebConfiguration "system.webserver/httpErrors" "IIS:\sites\$($site.name)" | Format-Table -Property ErrorMode,existingResponse,defaultResponseMode  -AutoSize | Out-String).Trim()
 
             Print-SubHeader "Authentication"
-            Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\$($site.Name)" | Sort-Object SectionPath | foreach{
+            Get-WebConfiguration "system.webserver/security/authentication/*" "IIS:\sites\$($site.Name)" | Sort-Object SectionPath | ForEach-Object{
                  Publish-Text -text ""
                  Publish-Text -text $($_.SectionPath -replace "/system.webServer/security/authentication/","")
                  Publish-Text -text ""
-                 Publish-Text -text ($_ | select -expandproperty attributes | Where {$_.Name -ne "password"} | Select Name,Value | Format-Table -AutoSize | out-string).Trim()
+                 Publish-Text -text ($_ | Select-Object -expandproperty attributes | Where-Object {$_.Name -ne "password"} | Select-Object Name,Value | Format-Table -AutoSize | out-string).Trim()
             }
 
             Show-PoolInfo $pool
@@ -521,22 +526,26 @@ param(
 
             Print-SubHeader "Folder permissions for $webRoot"
 
-            Publish-Text -text ((Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited | Format-Table -AutoSize | out-string).Trim()
+            Publish-Text -text ((Get-ACL $webRoot).Access | Sort-Object IdentityReference | Select-Object IdentityReference, FileSystemRights, AccessControlType, IsInherited | Format-Table -AutoSize | out-string).Trim()
 
-            $virDirs = Get-WebVirtualDirectory -site "$($site.name)"
+            $virDirs = Get-VirtualDirectory -siteName "$($site.name)" 
 
-            if ($virDirs.count -gt 0)
-            {
-                Print-SectionHeader "Virtual Directories"
-                Publish-Text -text ($virDirs | Format-Table -Property Path,PhysicalPath,AllowSubDirConfig,UserName  -AutoSize | Out-String).Trim()
+            Print-SectionHeader "Directories"
+            if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent)
+            {         
+                Publish-Text -text ($virDirs | Format-List -Property FullPath,PhysicalPath,AppPath, AllowSubDirConfig,UserName,LogonMethod | Out-String).Trim()
             }
-
+            else
+            {
+                Publish-Text -text ($virDirs | Format-Table -Property FullPath,PhysicalPath,UserName  -AutoSize | Out-String).Trim()
+            }
+                        
             $apps = Get-WebApplication -site "$($site.name)"
             
             if ($apps.count -gt 0)
             {
                 Print-SectionHeader "Applications"
-                Publish-Text -text ($apps | Select Path,PhysicalPath,applicationPool | Format-Table -AutoSize | Out-String).Trim()
+                Publish-Text -text ($apps | Select-Object Path,PhysicalPath,applicationPool | Format-Table -AutoSize | Out-String).Trim()
             }
          }
 
@@ -552,7 +561,7 @@ param(
             
             Print-Attribute "startMode" $($pool.startMode)
 
-            $pm = $pool | select -expandproperty processModel
+            $pm = $pool | Select-Object -expandproperty processModel
 
             Print-Attribute "identityType" $pm.identityType
             Print-Attribute "userName" $pm.userName
@@ -564,13 +573,13 @@ param(
 
         Function Show-Site([string]$name)
         {
-            $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq "$name"}
+            $site = Get-ChildItem iis:\sites\ | Where-Object {$_.name -eq "$name"}
             if ($site -eq $null)
             {
                 Publish-Warning -text "The WebSite `'$name`' could not found"
 
                 Publish-Text "Existing sites on this server:"
-                Get-ChildItem iis:\sites | Select Name | Format-Table -HideTableHeaders -AutoSize
+                Get-ChildItem iis:\sites | Select-Object Name | Format-Table -HideTableHeaders -AutoSize
 
                 Exit $WebSiteNotFound
             }
@@ -758,7 +767,7 @@ param(
         {
             if ([int]$PSVersionTable.PSVersion.Major -lt 30)
             {
-                return (Get-Content $fileName | Where-Object {$_ -notLike $exclude}) | Select -Last $tail
+                return (Get-Content $fileName | Where-Object {$_ -notLike $exclude}) | Select-Object -Last $tail
             }
             else
             {
@@ -783,7 +792,7 @@ param(
 
         }
 
-        Function Test-WebConfig([string]$webRoot)
+        Function Test-WebConfig([string]$webRoot,[string]$name)
         {
             $webConfig = Join-Path $webRoot "web.config"
 
@@ -808,7 +817,20 @@ param(
             }
             else
             {
-                Show-TestSuccess -info "Configuration `"$webConfig`" exists"   
+                try
+                {
+                    Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location "$name" -filter "system.webServer" -name . | Out-Null
+                }
+                catch [System.Exception]
+                {
+                    Publish-Warning -text "Web.Config has a problem"
+                    Publish-Text -text "$_"
+                    Publish-Text -text "Check `'$webConfig`' for any XML errors."
+                    Publish-Text -text "Also make sure any extensions that may be configured in the web.config are installed on the server."
+                    Publish-Text -text "A common problem is to have a 'rewrite' node in the web.config without having the Rewrite Module installed on the server"
+                    Exit $WebConfigInvalid
+                }
+                Show-TestSuccess -info "Configuration `"$webConfig`" exists and looks fine"   
             }                     
         }
 
@@ -843,7 +865,7 @@ param(
                             $Log
                         }
                         # store the last line in the html field to be used later
-                        $script:FailedRequest.html = $Log | Select -Last 1
+                        $script:FailedRequest.html = $Log | Select-Object -Last 1
                     }                    
                 }   
                 else
@@ -888,8 +910,33 @@ param(
                 }
                 catch [System.Management.Automation.PSInvalidCastException]
                 {
-                    Publish-Verbose -text "Returning html is not valid XML:" 
-                    return
+                    Publish-Verbose -text "Returning html is not valid XML." 
+
+                    if ([regex]::ismatch($html, "Microsoft .NET Framework Version", "IgnoreCase"))
+                    {
+                        Publish-Verbose -text "Microsoft .NET Framework Error Page (White-Yellow page of death)"                        
+                        $script:FailedRequest.SubStatus = $subDotNetException
+                        $script:FailedRequest.Win32 = [regex]::matches($html, "\((0x\d+)\):", "IgnoreCase").Groups[1].Value
+                        $script:FailedRequest.Processed = $true
+                        $script:FailedRequest.Information = [regex]::matches($html, "<h2> <i>(.+)</i> </h2>", "IgnoreCase").Groups[1].Value
+
+                        $stackTrace = [regex]::matches($html, "<!--(.+)-->", "Singleline").Groups[1].Value
+                        $stackTrace = $stackTrace -replace "&#39;","'"
+                        if ($stackTrace -ne "")
+                        {
+                            $script:FailedRequest.Information = $stackTrace
+                        }
+                    }
+                    else
+                    {
+                        return
+                    }
+
+                    
+
+                    #  Version
+
+                    
                 }
                 catch [System.Net.WebException],[System.Exception]
                 {
@@ -899,13 +946,25 @@ param(
                 }
                 finally
                 {
-                }                                                             
+                }         
+                
+                if (!($script:FailedRequest.Processed))
+                {                                                    
+                    $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d{3}.(\d{1,3})').Groups[1].Value
 
-                $script:FailedRequest.SubStatus = [regex]::match($xml.html.body.div.div.h3,'\d{3}.(\d{1,3})').Groups[1].Value
-                if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
-                {
-                     $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
+                    Publish-Verbose -text "Discovered a sub-status of $($script:FailedRequest.SubStatus)"
+
+                    if ( ($xml.html.body.div.div[3].fieldset.div.table.tr).count -gt 2)
+                    {
+                         $script:FailedRequest.Win32 = $xml.html.body.div.div[3].fieldset.div.table.tr[3].td
+                    }
+                    elseif ( ($xml.html.body.div.div[1].fieldset.div.table.tr).count -gt 2)
+                    {
+                         $script:FailedRequest.Win32 = $xml.html.body.div.div[1].fieldset.div.table.tr[3].td
+                    }
                 }
+
+                Publish-Verbose -text "Discovered a win32-status of $($script:FailedRequest.Win32)"
             }
             
             # we could get other information from the page
@@ -944,7 +1003,7 @@ param(
             # we assume the entry we are looking for is the last one, so using -tail 50
             # gives us for few more, just in case.
 
-            $Log = Get-Content $logFileName -Tail 50 | where {$_ -notLike "#[D,S-V]*" }
+            $Log = Get-Content $logFileName -Tail 50 | Where-Object {$_ -notLike "#[D,S-V]*" }
 
             $fields = ""
             $statusColumn = 0
@@ -982,7 +1041,7 @@ param(
 
             if(!($lineFound))
             {
-                WPublish-Text -text "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
+                Publish-Text -text "No entry found in the logfile `'$logFileName`' to the request: $($request.Value)"
             }                         
         }
        
@@ -1047,7 +1106,10 @@ param(
                               Publish-Text "$caption`: $($resp.Headers[$HeaderKey])";
                         }
 
-                        Write-Debug "$result"
+                        if ($PSCmdlet.MyInvocation.BoundParameters["Debug"].IsPresent)
+                        {
+                             Publish-Text "$result" 
+                        }
                     }
 
                     # store the result in a global object
@@ -1062,6 +1124,7 @@ param(
                         Server = $resp.Headers["Server"] 
                         ContentLength = $resp.Headers["Content-Length"] 
                         ContentType = $resp.Headers["Content-Type"]
+                        Information = ""
                         }      
                     
                     return [int]$resp.StatusCode                
@@ -1071,6 +1134,111 @@ param(
                 Publish-Verbose -Text $_.Exception
                 return 55500
             }
+        }
+
+        Function Get-VirtualDirectory($siteName)
+        {
+            # each virtual directory including the root can have its own username which determines access permissions
+
+            $VDirs = @()
+
+            Get-WebConfiguration -pspath 'MACHINE/WEBROOT/APPHOST' -filter "system.applicationHost/sites/site[@name='$($siteName)']/application" | ForEach-Object {
+                $AppPath = $_.Path
+                Get-WebConfiguration -pspath 'MACHINE/WEBROOT/APPHOST' -filter "system.applicationHost/sites/site[@name='$($siteName)']/application[@Path='$($_.Path)']/virtualDirectory" | ForEach-Object {
+                    $fullPath = $AppPath + $_.Path
+                    $fullPath = $fullPath -replace "\/\/","/"
+                    if (!($fullPath.EndsWith("/")))
+                    {
+                        $fullPath += "/"
+                    }
+        
+                    $vDir = New-Object psobject -Property @{
+                        FullPath = $fullPath
+                        PhysicalPath = [System.Environment]::ExpandEnvironmentVariables($_.physicalPath)
+                        UserName = $_.userName
+                        LogonMethod = $_.LogonMethod
+                        AllowSubDirConfig = $_.AllowSubDirConfig
+                        AppPath = $AppPath
+                    }
+        
+                    $VDirs += $vDir                          
+                }                                                               
+            }
+
+            return $VDirs
+
+           # Get-VirtualDirectory -siteName "Default Web Site" | Format-Table -Property FullPath,PhysicalPath,AllowSubDirConfig,UserName, LogonMethod  -AutoSize
+
+        }
+
+        Function Get-ExecutingDirectory($siteName,$Resource)
+        {
+            # each virtual directory including the root can have its own username which determines access permissions
+
+            $vLen = -1
+            $Resource2 = $Resource + "/"
+
+            $dir = $null
+
+            # we are trying to find the best matching directory for the request
+            Get-VirtualDirectory -siteName $siteName | ForEach-Object {
+
+                $pattern = "^$($_.FullPath)"
+
+                if ($Resource -match $pattern -or $Resource2 -match $pattern)
+                {
+                    if ($_.FullPath.Length -gt $vLen)
+                    {
+                        $dir = $_
+                        $vLen = $_.FullPath.Length 
+                    }                   
+                }  
+            }
+
+            if ($vLen -eq -1)
+            {
+                Publish-Warning "No matching directory found for request '$($Resource)'"
+            }
+            else
+            {
+                Publish-Verbose "Found directory '$($dir.FullPath)' for request '$($Resource)'"
+            }
+
+            return $dir
+        }
+
+        Function Repair-Permission([string]$potentialResource,$site,$webRoot,$pool,$AppProcessmodel)
+        {
+            If (Test-Path $potentialResource)
+            {
+                Publish-Text -text "Here are the permissions for file: $potentialResource"
+                (Get-ACL $potentialResource).Access | Select-Object IdentityReference, FileSystemRights, AccessControlType, IsInherited
+                # show the user running the pool
+                # suggest acl change to fix this problem
+                    
+                if ($AppProcessmodel.identityType -eq "ApplicationPoolIdentity")
+                {
+                    Publish-Text -text "`r`nThe Application pool is running under: `"IIS APPPOOL\$($pool.name)`""
+                }
+                else
+                {
+                    Publish-Text -text "The Application pool is running under: $($AppProcessmodel.identityType)"
+                }   
+                    
+                Publish-Text -text ""       
+                    
+                if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
+                {
+                    Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " -intro "You may want to give read access to IIS_IUSRS"
+                    Show-PoshCommand -info "& icacls.exe `"$webRoot`" /T /grant `"BUILTIN\IIS_IUSRS:(OI)(CI)(RX)`" " -intro "Or better, set read permission for the webroot to IIS_IUSRS"
+                }  
+                else
+                {                        
+                    Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"IUSR:RX`" " -intro "You may want to give read access to IUSR"
+                    Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant /T `"IUSR:(OI)(CI)(RX)`" " -intro "Or give read access to IUSR for the whole webroot folder"
+                    Show-PoshCommand -info "Set-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location `'$($site.Name)`' -filter 'system.webServer/security/authentication/anonymousAuthentication' -name 'userName' -value ''" -intro "Or use the ApplicationPoolIdentity as user for anonymous access" 
+                }                                                  
+            }            
         }
 
         Function Process-Problem
@@ -1084,6 +1252,7 @@ param(
 
             $fullStatus = "$($script:FailedRequest.Status).$($script:FailedRequest.SubStatus)"
             Publish-FailureText -text "$($script:FailedRequest.Url) - $fullStatus - Win32: $($script:FailedRequest.Win32)"
+           
 
             if ($statusInfo.ContainsKey($fullStatus))
             {
@@ -1103,13 +1272,45 @@ param(
             $potentialResource = Join-Path $webRoot $res
 
             Publish-Verbose -Text "Physical Resource: $potentialResource"
+            $dir = Get-ExecutingDirectory -siteName $site.Name -Resource $Resource      
+            Publish-Verbose -Text "Directory: '$($dir.FullPath)'"      
 
-            $AppProcessmodel = ($pool | Select -ExpandProperty processmodel)
+            $AppProcessmodel = ($pool | Select-Object -ExpandProperty processmodel)
             $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+
+            $userAccount = ""
+
+            $siteUser = (Get-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -location "$($site.Name)" -filter "system.webServer/security/authentication/anonymousAuthentication[@enabled='true']" -name "userName").value           
+
+            if ($dir.UserName -ne "")
+            {
+                $userAccount = $dir.UserName
+            }
+            elseif ($siteUser -ne $null -and $siteUser -ne "")
+            {
+                $userAccount = $siteUser
+            }
+            else
+            {                 
+                if ($AppProcessmodel.identityType -eq "ApplicationPoolIdentity")
+                {
+                    $userAccount = "IIS APPPOOL\$($pool.name)"
+                }
+                else
+                {
+                    $userAccount  = "$($AppProcessmodel.identityType)"
+                }
+            }
+            if ($userAccount -notmatch "\\")
+            {
+                $userAccount = $env:COMPUTERNAME + "\" + $userAccount
+            }
+
+            Publish-Verbose -text "User-Account used for this request: '$($userAccount)'"
 
             try
             {
-                $defaultDocs = Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select value    
+                $defaultDocs = Get-WebConfiguration "system.webserver/defaultdocument/files/*" "IIS:\sites\$($site.Name)" | Select-Object value    
             }
             catch
             {
@@ -1122,7 +1323,7 @@ param(
                 # we could have different default documents in subfolders
                 # for now we just check the default documents for the site
 
-                $defaultDocs | ForEach {
+                $defaultDocs | ForEach-Object {
 
                     $file = (Join-Path $webRoot $res)
                     $file = (Join-Path $file $_.value)
@@ -1140,7 +1341,7 @@ param(
 
             # display content from the IIS error pages
             # there may be more than one language we just pick the random first one
-            $errorPageDir = Get-ChildItem $env:SystemDrive\inetpub\custerr\ | select -First 1
+            $errorPageDir = Get-ChildItem $env:SystemDrive\inetpub\custerr\ | Select-Object -First 1
             # get the full file name for the error page
             $errorPageFile = $script:FailedRequest.Status.ToString() + "-" + $script:FailedRequest.SubStatus.ToString() + ".htm"
             $errorPageFile = Join-Path $errorPageDir.FullName $errorPageFile
@@ -1176,7 +1377,7 @@ param(
                 If (Test-Path $potentialResource)
                 {
                     Publish-Text -text "Here are the permissions for file: $potentialResource"
-                    (Get-ACL $potentialResource).Access | Select IdentityReference, FileSystemRights, AccessControlType, IsInherited
+                    (Get-ACL $potentialResource).Access | Select-Object IdentityReference, FileSystemRights, AccessControlType, IsInherited
                     # show the user running the pool
                     # suggest acl change to fix this problem
                     
@@ -1191,7 +1392,7 @@ param(
                     
                     Publish-Text -text ""       
                     
-                    if (((Get-ACL "$potentialResource").Access | where IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
+                    if (((Get-ACL "$potentialResource").Access | Where-Object IdentityReference -eq "BUILTIN\IIS_IUSRS").count -eq 0)
                     {
                         Show-PoshCommand -info "& icacls.exe `"$potentialResource`" /grant `"BUILTIN\IIS_IUSRS:RX`" " -intro "You may want to give read access to IIS_IUSRS"
                         Show-PoshCommand -info "& icacls.exe `"$webRoot`" /T /grant `"BUILTIN\IIS_IUSRS:(OI)(CI)(RX)`" " -intro "Or better, set read permission for the webroot to IIS_IUSRS"
@@ -1215,7 +1416,7 @@ param(
             elseif ($fullStatus -eq "403.14")
             {
                 Publish-Text -text "Make sure one of the defined default documents is present in the folder: `'$webRoot`'"
-                $defaultDocs | ForEach {
+                $defaultDocs | ForEach-Object {
                     Publish-Text -text " - $($_.value) "
                 }
                 Publish-Text -text "We do not recommend to enable directory browsing"
@@ -1241,7 +1442,7 @@ param(
                 {
                     Publish-Warning -text "All unlisted addresses are NOT allowed"
                 }
-                $ipRe = (Get-WebConfiguration "system.webserver/security/ipsecurity/*" "IIS:\sites\$($site.name)" | Select ipAddress,subnetMask,domainName,allowed | ft -AutoSize | Out-String).Trim()
+                $ipRe = (Get-WebConfiguration "system.webserver/security/ipsecurity/*" "IIS:\sites\$($site.name)" | Select-Object ipAddress,subnetMask,domainName,allowed | ft -AutoSize | Out-String).Trim()
 
                 if ($ipRe -ne $null)
                 {
@@ -1251,16 +1452,31 @@ param(
                 Publish-Text -text "Check both the site and the server level."                       
 
             }
+            elseif ($fullStatus -eq $("500." + $subDotNetException))
+            {
+                Publish-Text -text "Fix this .NET Exception"
+                Publish-Text -text "Code: $($script:FailedRequest.Win32)"
+                Publish-Text -text $script:FailedRequest.Information
+            }
             elseif ($fullStatus -eq "500.19")
             {             
-                if ($win32Status -eq 5)
+                if ($($script:FailedRequest.Win32) -eq 5)
                 {
                     Publish-Text -text "Set permissions on web.config"
                 } 
-                elseif ($win32Status -eq 50)
+                elseif ($($script:FailedRequest.Win32) -eq 50)
                 {
                     Publish-Text -text "Problem with the Configuration"
                 }  
+                elseif ($($script:FailedRequest.Win32) -eq "0x80070005")
+                {
+                    Publish-Text -text "Problem with the permissions of Configuration"
+                    Repair-Permission -PotentialResource $potentialResource -site $site -webRoot $webRoot -pool $pool -AppProcessmodel $AppProcessmodel
+                }
+                else
+                {
+                    Publish-Text -text "$($script:FailedRequest.Win32) - Please check: https://support.microsoft.com/en-us/kb/942055"
+                }
             }
             elseif ($fullStatus -eq "503.0")
             {             
@@ -1270,7 +1486,7 @@ param(
                 Publish-Text -text "If you are running a custom application, please check the Windows event logs"
 
                 $pastSeconds = 10
-                $time = (Get-Date) – (New-TimeSpan -Minute $pastSeconds)
+                $time = (Get-Date) - (New-TimeSpan -Minute $pastSeconds)
 
                 # never get more than 50 events
                 $errorEvents = Get-WinEvent -MaxEvents 50 -FilterHashtable @{Level=2;logname='application';StartTime=$time}  -Verbose:$false
@@ -1278,7 +1494,7 @@ param(
                 if ($errorEvents.Count -gt 0)
                 {
                   Publish-Warning -text "$($errorEvents.Count) errors found in the application event log in the last $($pastSeconds ) seconds"
-                  Publish-Text -text ($errorEvents | Select TimeCreated, ProviderName, Message | fl)
+                  Publish-Text -text ($errorEvents | Select-Object TimeCreated, ProviderName, Message | Format-List)
                 }
                 else
                 {
@@ -1359,12 +1575,12 @@ param(
 
             if (Test-Path $frebDir)
             {
-                $frebFiles = Get-ChildItem $frebDir -Filter "fr*.xml" | Where LastWriteTime -gt $script:RequestStart.DateTime
+                $frebFiles = Get-ChildItem $frebDir -Filter "fr*.xml" | Where-Object LastWriteTime -gt $script:RequestStart.DateTime
 
                 if ($frebFiles.count -gt 0)
                 {
                     Publish-Text -text "Failed Request Tracing files are available:"
-                    $frebFiles | ForEach {
+                    $frebFiles | ForEach-Object {
                         Publish-Text -text $(Copy-FrebFiles $_.FullName)
                     }
                 }
@@ -1414,7 +1630,7 @@ param(
             Exit $ExitSuccess 
         }
 
-        $site = Get-ChildItem iis:\sites\ | Where {$_.name -eq $name}
+        $site = Get-ChildItem iis:\sites\ | Where-Object {$_.name -eq $name}
 
         if ($site -eq $null)
         {
@@ -1449,6 +1665,9 @@ param(
 
         Show-TestSuccess -info "WebSite: `"$name`" is running"
 
+        $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
+        Test-WebConfig -webRoot $webRoot -name $name
+
         $poolName = $site.applicationPool
 
         $pool = Get-Item IIS:\\AppPools\$poolName
@@ -1470,9 +1689,7 @@ param(
             Exit $AppPoolNotRunning
         }
         
-        $webRoot = [System.Environment]::ExpandEnvironmentVariables($site.PhysicalPath)
 
-        Test-WebConfig -webRoot $webRoot
 
         $script:RequestStart = Get-Date
              

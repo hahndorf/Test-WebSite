@@ -1,6 +1,6 @@
 # Using Test-WebSite.ps1
 
-##Getting the script
+## Getting the script
 
 There are several ways to get the script file to your computer, download the zip, clone the repository, save the content manually into a file. 
 You can also get it with PowerShell:
@@ -15,7 +15,7 @@ then download the script:
 
 After downloading a PowerShell script from the Internet, you should always review it to make sure it doesn't do anything bad, especially because we have to run it as an elevated administrator. 
 
-##Running the script
+## Running the script
 
 Assuming you are still in the location you downloaded the script to, find out more about the parameters you can use for the script:
 
@@ -45,7 +45,7 @@ then review the text and remove anything you don't want to share with the suppor
 
 More information can be found in the [main read.me](https://github.com/hahndorf/Test-WebSite)
 
-##Problems running the script
+## Problems running the script
 
 You may get one of the following messages when trying to run a script:
 
@@ -89,3 +89,13 @@ The scripts are using the PowerShell module WebAdministration, it comes with Win
 To run this script you need to be an elevated administrator, run:
 
     Start-Process -Verb runas -FilePath $PSHOME\powershell.exe
+
+### 'The data is invalid' when using -ShowSite...
+
+This indicates a configuration problem, go straight into the test:
+
+    Test-WebSite.ps1 -name sitename
+
+### To get additional information, use:
+
+    Test-WebSite.ps1 -name sitename -verbose
