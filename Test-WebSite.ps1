@@ -85,7 +85,8 @@
     Should work with PowerShell 2 on Windows 7 SP1 and anything newer
 
     Author:  Peter Hahndorf
-    Created: July 1, 2015 
+    Created: July 1st, 2015 
+    Updated: November 5th, 2019
     
 .LINK
     https://github.com/hahndorf/Test-WebSite   
